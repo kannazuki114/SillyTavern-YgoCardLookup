@@ -8,20 +8,47 @@ let baseOverride = null;
 /** 本扩展自己的目录（打包为经典脚本后用固定路径；测试可覆盖） */
 export function ownBase() {
     if (baseOverride) return baseOverride;
+    // ① 宿主给的扩展路径：**任何目录名都接受**（从 GitHub 安装时目录名 = 仓库名，例如 ygo-card-lookup）
     try {
         const c = typeof ctx === "function" ? ctx() : null;
         const fromHost = c && c.extensionPath ? String(c.extensionPath) : "";
-        if (fromHost && fromHost.indexOf("ygo-card-lookup-v2") >= 0) return fromHost;
+        if (fromHost && fromHost.indexOf("ygo-card-lookup") >= 0) return fromHost;
     } catch (error) { /* 忽略 */ }
+    // ② 从页面上的 <script> 反推自身目录（这个最准，和目录名无关）
+    try {
+        const doc = (typeof document !== "undefined") ? document : null;
+        if (doc) {
+            const list = doc.querySelectorAll("script[src]");
+            for (const el of list) {
+                const src = String(el.getAttribute("src") || el.src || "");
+                const at = src.indexOf("/scripts/extensions/");
+                if (at < 0 || src.indexOf("ygo-card-lookup") < 0) continue;
+                const head = src.slice(0, at) + src.slice(at, src.lastIndexOf("/") + 1);
+                if (head) return head;
+            }
+        }
+    } catch (error) { /* 忽略 */ }
+    // ③ 兜底：常用目录名（两个都试，反正 dataFile 会轮询候选）
     return EXT_PATH;
 }
+
 export function setOwnBase(url) { baseOverride = url ? String(url) : null; }
 
 
 /** 读扩展自带文本；v2 目录缺失时回退旧目录。 */
+/** 数据文件候选 URL：自身目录优先，其次两个常见目录名（去重） */
+export function dataCandidates(name) {
+    const file = String(name || "");
+    const out = [];
+    for (const base of [ownBase(), EXT_PATH, LEGACY_BASE]) {
+        const u = base + file;
+        if (out.indexOf(u) < 0) out.push(u);
+    }
+    return out;
+}
 export async function dataFile(name, fetchImpl) {
     const doFetch = fetchImpl || fetch;
-    for (const url of [ownBase() + name, LEGACY_BASE + name]) {
+for (const url of dataCandidates(name)) {
         try {
             const response = await doFetch(url);
             if (response && response.ok) return await response.text();

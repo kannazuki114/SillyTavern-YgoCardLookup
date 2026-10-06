@@ -123,6 +123,29 @@ export const ASSET_LIST = [
 ].concat(Object.keys(ARROW_FILES).flatMap(function (a) { return ["arrow-" + ARROW_FILES[a] + "-on.webp", "arrow-" + ARROW_FILES[a] + "-off.webp"]; }));
 
 /** 素材目录：优先用设置里的自定义目录，否则用本扩展自带的 assets/yugioh/ */
+/**
+ * 实测卡框素材能不能真的加载（不是看文件列表，而是让浏览器去取一张）。
+ * 用途：DIY 打开时/自检时给一行明确日志，避免"面板能开但卡框空白"却查不出原因。
+ */
+export async function checkFrameAssets() {
+    const base = frameBase();
+    const sample = base + "card-normal.webp";
+    const custom = String(settings.get("diyFrameBase") || "").trim();
+    if (typeof Image !== "function") return "（当前环境不支持 Image，跳过实测）";
+    const ok = await new Promise(function (resolve) {
+        const img = new Image();
+        let done = false;
+        const finish = function (v) { if (!done) { done = true; resolve(v); } };
+        img.onload = function () { finish(true); };
+        img.onerror = function () { finish(false); };
+        setTimeout(function () { finish(false); }, 5000);
+        img.src = sample;
+    });
+    if (ok) { log("DIY", "卡框素材加载正常：" + sample); return "✅ 卡框素材加载正常（" + sample + "）"; }
+    const msg = "❌ 卡框素材加载失败：" + sample + (custom ? "（当前用的是自定义目录：" + custom + "）" : "") + "。检查该路径下是否有 card-normal.webp；若是从 GitHub 安装，请确认为最新版（数据/素材路径已改为自动定位）。";
+    log("DIY", msg);
+    return msg;
+}
 export function frameBase() {
     const custom = String(settings.get("diyFrameBase") || "").trim();
     if (custom) return custom.replace(/\/?$/, "/");

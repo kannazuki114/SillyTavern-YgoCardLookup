@@ -1,6 +1,6 @@
 /*! 游戏王查卡器 v2 —— 单文件打包产物（经典脚本，无 import/export）。
  *  由 tools/bundle.mjs 生成；请勿直接修改本文件，改 src/ 后重新打包。
- *  模块数：34，import：177 处，export：488 处。
+ *  模块数：34，import：177 处，export：490 处。
  */
 (function () {
 'use strict';
@@ -1802,20 +1802,47 @@ let baseOverride = null;
 /** 本扩展自己的目录（打包为经典脚本后用固定路径；测试可覆盖） */
 function ownBase() {
     if (baseOverride) return baseOverride;
+    // ① 宿主给的扩展路径：**任何目录名都接受**（从 GitHub 安装时目录名 = 仓库名，例如 ygo-card-lookup）
     try {
         const c = typeof ctx === "function" ? ctx() : null;
         const fromHost = c && c.extensionPath ? String(c.extensionPath) : "";
-        if (fromHost && fromHost.indexOf("ygo-card-lookup-v2") >= 0) return fromHost;
+        if (fromHost && fromHost.indexOf("ygo-card-lookup") >= 0) return fromHost;
     } catch (error) { /* 忽略 */ }
+    // ② 从页面上的 <script> 反推自身目录（这个最准，和目录名无关）
+    try {
+        const doc = (typeof document !== "undefined") ? document : null;
+        if (doc) {
+            const list = doc.querySelectorAll("script[src]");
+            for (const el of list) {
+                const src = String(el.getAttribute("src") || el.src || "");
+                const at = src.indexOf("/scripts/extensions/");
+                if (at < 0 || src.indexOf("ygo-card-lookup") < 0) continue;
+                const head = src.slice(0, at) + src.slice(at, src.lastIndexOf("/") + 1);
+                if (head) return head;
+            }
+        }
+    } catch (error) { /* 忽略 */ }
+    // ③ 兜底：常用目录名（两个都试，反正 dataFile 会轮询候选）
     return EXT_PATH;
 }
+
 function setOwnBase(url) { baseOverride = url ? String(url) : null; }
 
 
 /** 读扩展自带文本；v2 目录缺失时回退旧目录。 */
+/** 数据文件候选 URL：自身目录优先，其次两个常见目录名（去重） */
+function dataCandidates(name) {
+    const file = String(name || "");
+    const out = [];
+    for (const base of [ownBase(), EXT_PATH, LEGACY_BASE]) {
+        const u = base + file;
+        if (out.indexOf(u) < 0) out.push(u);
+    }
+    return out;
+}
 async function dataFile(name, fetchImpl) {
     const doFetch = fetchImpl || fetch;
-    for (const url of [ownBase() + name, LEGACY_BASE + name]) {
+for (const url of dataCandidates(name)) {
         try {
             const response = await doFetch(url);
             if (response && response.ok) return await response.text();
@@ -1976,7 +2003,7 @@ async function clearAllCache() {
 }
 function hostReady() { const c = ctx(); return !!(c && (c.chat || c.extensionSettings)); }
 
-return { LEGACY_BASE, EXT_PATH, ownBase, setOwnBase, dataFile, fetchJson, cached, clearCache, lazyIndex, IDB_NAME, IDB_STORE, IDB_VERSION, DEFAULT_TTL, idbGet, idbSet, idbDel, idbClear, dataFileCached, clearAllCache, hostReady };
+return { LEGACY_BASE, EXT_PATH, ownBase, setOwnBase, dataCandidates, dataFile, fetchJson, cached, clearCache, lazyIndex, IDB_NAME, IDB_STORE, IDB_VERSION, DEFAULT_TTL, idbGet, idbSet, idbDel, idbClear, dataFileCached, clearAllCache, hostReady };
 });
 
 __def("src/core/registry.js", function (__req) {
@@ -5684,6 +5711,29 @@ const ASSET_LIST = [
 ].concat(Object.keys(ARROW_FILES).flatMap(function (a) { return ["arrow-" + ARROW_FILES[a] + "-on.webp", "arrow-" + ARROW_FILES[a] + "-off.webp"]; }));
 
 /** 素材目录：优先用设置里的自定义目录，否则用本扩展自带的 assets/yugioh/ */
+/**
+ * 实测卡框素材能不能真的加载（不是看文件列表，而是让浏览器去取一张）。
+ * 用途：DIY 打开时/自检时给一行明确日志，避免"面板能开但卡框空白"却查不出原因。
+ */
+async function checkFrameAssets() {
+    const base = frameBase();
+    const sample = base + "card-normal.webp";
+    const custom = String(settings.get("diyFrameBase") || "").trim();
+    if (typeof Image !== "function") return "（当前环境不支持 Image，跳过实测）";
+    const ok = await new Promise(function (resolve) {
+        const img = new Image();
+        let done = false;
+        const finish = function (v) { if (!done) { done = true; resolve(v); } };
+        img.onload = function () { finish(true); };
+        img.onerror = function () { finish(false); };
+        setTimeout(function () { finish(false); }, 5000);
+        img.src = sample;
+    });
+    if (ok) { log("DIY", "卡框素材加载正常：" + sample); return "✅ 卡框素材加载正常（" + sample + "）"; }
+    const msg = "❌ 卡框素材加载失败：" + sample + (custom ? "（当前用的是自定义目录：" + custom + "）" : "") + "。检查该路径下是否有 card-normal.webp；若是从 GitHub 安装，请确认为最新版（数据/素材路径已改为自动定位）。";
+    log("DIY", msg);
+    return msg;
+}
 function frameBase() {
     const custom = String(settings.get("diyFrameBase") || "").trim();
     if (custom) return custom.replace(/\/?$/, "/");
@@ -5897,7 +5947,7 @@ function registerDiyUi() {
 
 const diyUi = { EDITOR_ID, REAL_FILES, REAL_PENDULUM, ATTR_FILES, SUBTYPE_ICONS, ARROW_FILES, ASSET_LIST, frameBase, realFrameHtml, cardFaceHtml, installFrameFallback, checkAssets, CATEGORIES, FRAMES, ATTRS, RACES, ARROWS, SPELL_SUBTYPES, TRAP_SUBTYPES, ATTR_COLOR, FRAME_STYLE, frameKeyOf, frameStyleOf, typeLine, starsOf, diyCardHtml, subtypeOptions, editorHtml, readDraft, openDiyEditor, registerDiyUi };
 
-return { EDITOR_ID, CATEGORIES, FRAMES, ATTRS, RACES, ARROWS, SPELL_SUBTYPES, TRAP_SUBTYPES, ATTR_COLOR, FRAME_STYLE, frameKeyOf, frameStyleOf, typeLine, starsOf, diyCardHtml, REAL_FILES, REAL_PENDULUM, ATTR_FILES, SUBTYPE_ICONS, ARROW_FILES, ASSET_LIST, frameBase, realFrameHtml, cardFaceHtml, installFrameFallback, checkAssets, subtypeOptions, editorHtml, readDraft, openDiyEditor, registerDiyUi, diyUi };
+return { EDITOR_ID, CATEGORIES, FRAMES, ATTRS, RACES, ARROWS, SPELL_SUBTYPES, TRAP_SUBTYPES, ATTR_COLOR, FRAME_STYLE, frameKeyOf, frameStyleOf, typeLine, starsOf, diyCardHtml, REAL_FILES, REAL_PENDULUM, ATTR_FILES, SUBTYPE_ICONS, ARROW_FILES, ASSET_LIST, checkFrameAssets, frameBase, realFrameHtml, cardFaceHtml, installFrameFallback, checkAssets, subtypeOptions, editorHtml, readDraft, openDiyEditor, registerDiyUi, diyUi };
 });
 
 __def("src/ui/game.js", function (__req) {
@@ -7103,7 +7153,7 @@ if (typeof globalThis !== "undefined" && (globalThis.SillyTavern || (ctx() && ct
 return { MODULE_VERSION, PROBE_KEY, probe, INTERCEPTOR_NAME, PANEL_ACTIONS, REQUIRED_CAPS, boot, ygo2Activate, ensureBoot };
 });
 
-try { globalThis.YgoCardLookupV2Build = {"at":"2026-10-05T20:33:34","hash":"a7584215","modules":34}; } catch (e) { /* 忽略 */ }
+try { globalThis.YgoCardLookupV2Build = {"at":"2026-10-06T09:19:12","hash":"759a5f35","modules":34}; } catch (e) { /* 忽略 */ }
 var __entry = __req("index.js");
 try { globalThis.YgoCardLookupV2 = __entry; } catch (e) { /* 忽略 */ }
 })();
