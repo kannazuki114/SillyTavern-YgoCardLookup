@@ -55,6 +55,66 @@ export function ownBase() {
 
 export function setOwnBase(url) { baseOverride = url ? String(url) : null; }
 
+/** 本扩展 manifest 里独一无二的标记（用来确认"某个目录是不是我自己"） */
+export const OWN_MARKER = "YgoCardLookupV2";
+
+/** 收集"有可能是我自己目录"的路径，按可信度排序（用于异步确认） */
+export function candidateBases() {
+    const out = [];
+    const push = function (u) { const s = String(u || "").trim(); if (s && out.indexOf(s) < 0) out.push(s); };
+    push(baseOverride);
+    push(selfBase);
+    try {
+        const c = typeof ctx === "function" ? ctx() : null;
+        const fromHost = c && c.extensionPath ? String(c.extensionPath) : "";
+        if (fromHost) push(fromHost.replace(/\/?$/, "/"));
+    } catch (error) { /* 忽略 */ }
+    // 页面上的 <script src> / <link href>：只要落在扩展目录里就收，**不管目录叫什么名字**
+    // （桌面客户端是用 ES 模块方式加载扩展的，此时 document.currentScript 为 null，
+    //   只有靠这些线索 + manifest 探测才能认出自己）
+    try {
+        const doc = (typeof document !== "undefined") ? document : null;
+        if (doc && typeof doc.querySelectorAll === "function") {
+            for (const el of doc.querySelectorAll("script[src]")) {
+                const src = String(el.getAttribute("src") || el.src || "");
+                const at = src.indexOf("/scripts/extensions/");
+                if (at >= 0 && src.lastIndexOf("/") > at) push(src.slice(0, src.lastIndexOf("/") + 1).replace(/dist\/$/, ""));
+            }
+            for (const el of doc.querySelectorAll("link[href]")) {
+                const href = String(el.getAttribute("href") || el.href || "");
+                const at = href.indexOf("/scripts/extensions/");
+                if (at >= 0 && href.lastIndexOf("/") > at) push(href.slice(0, href.lastIndexOf("/") + 1));
+            }
+        }
+    } catch (error) { /* 忽略 */ }
+    push(EXT_PATH);
+    push(LEGACY_BASE);
+    return out;
+}
+
+/** 异步确认自己的目录：逐个候选读 manifest.json，看到本扩展的标记就认下来并覆盖 baseOverride。
+ *  这一步是"目录名任意 / 宿主不给定位信息"时唯一可靠的兜底 —— 否则 data/、assets/、settings.html 全 404。 */
+let discoverPromise = null;
+export async function discoverOwnBase() {
+    if (baseOverride) return baseOverride;
+    if (discoverPromise) return discoverPromise;
+    discoverPromise = (async function () {
+        for (const dir of candidateBases()) {
+            try {
+                const res = await fetch(dir + "manifest.json", { cache: "no-store" });
+                if (!res || !res.ok) continue;
+                const text = await res.text();
+                if (text.indexOf(OWN_MARKER) < 0) continue;
+                setOwnBase(dir);
+                log("数据", "扩展目录已确认：" + dir + "（靠 manifest 探测）");
+                return dir;
+            } catch (error) { /* 换下一个候选 */ }
+        }
+        return null;
+    })();
+    return discoverPromise;
+}
+
 
 /** 读扩展自带文本；v2 目录缺失时回退旧目录。 */
 /** 数据文件候选 URL：自身目录优先，其次两个常见目录名（去重） */
@@ -75,6 +135,8 @@ export function dataCandidates(name) {
 }
 
 export async function dataFile(name, fetchImpl) {
+    // ① 先用"手动安装"进 IndexedDB 的那一份（v1 模式；装了就用它，没装就往下走）
+    try { const hit = await idbGet("db:" + String(name || ""), 0); if (hit) return hit; } catch (error) { /* 没有 IndexedDB 就跳过 */ }
     const doFetch = fetchImpl || ((typeof fetch === "function") ? fetch : null);
     if (!doFetch) { log("数据", "读取失败：" + name + "（当前环境没有可用的 fetch）"); return ""; }
     const tried = [];

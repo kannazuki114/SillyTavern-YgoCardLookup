@@ -1,6 +1,6 @@
 /*! 游戏王查卡器 v2 —— 单文件打包产物（经典脚本，无 import/export）。
  *  由 tools/bundle.mjs 生成；请勿直接修改本文件，改 src/ 后重新打包。
- *  模块数：35，import：184 处，export：507 处。
+ *  模块数：36，import：189 处，export：530 处。
  */
 (function () {
 'use strict';
@@ -1186,7 +1186,7 @@ function emitApi(event, payload) {
 function actions() {
     const out = [];
     for (const key of registry.list()) {
-        const m = /^(?:runAction|tool|cmd|ui):(.+)$/.exec(String(key));   // ui: 也暴露（sendbox/buy/collection…），酒馆助手脚本直接按动作名调
+        const m = /^(?:runAction|tool|cmd|ui):(.+)$/.exec(String(key));   // ui: 也暴露（sendbox/buy/collection…）
         if (m && out.indexOf(m[1]) < 0) out.push(m[1]);
     }
     for (const k of Object.keys(customActions)) if (out.indexOf(k) < 0) out.push(k);
@@ -1738,7 +1738,9 @@ function registerTools() {
     try {
         registry.provide("runAction:strictness", async function (args) {
             const key = String((args && (args.level || args.value)) || "normal").trim().toLowerCase();
-            const value = (key === "strict" || key === "最严格") ? "strict" : ((key === "loose" || key === "宽松") ? "loose" : "normal");
+            // 与 panel.js 的 applyStrictness 同一套别名（含 "3"/"1" 数字档），避免两处实现不一致
+            const value = (key === "strict" || key === "最严格" || key === "3") ? "strict"
+                : ((key === "loose" || key === "宽松" || key === "1") ? "loose" : "normal");
             settings.set("detectStrictness", value);
             log("工具", "识别严格程度 = " + value);
             return "识别严格程度 = " + value + (value === "strict" ? "（最严格：只认完整卡名）" : value === "loose" ? "（宽松：尽量多命中）" : "（适中：允许够具体的名字片段）");
@@ -1949,6 +1951,66 @@ function ownBase() {
 
 function setOwnBase(url) { baseOverride = url ? String(url) : null; }
 
+/** 本扩展 manifest 里独一无二的标记（用来确认"某个目录是不是我自己"） */
+const OWN_MARKER = "YgoCardLookupV2";
+
+/** 收集"有可能是我自己目录"的路径，按可信度排序（用于异步确认） */
+function candidateBases() {
+    const out = [];
+    const push = function (u) { const s = String(u || "").trim(); if (s && out.indexOf(s) < 0) out.push(s); };
+    push(baseOverride);
+    push(selfBase);
+    try {
+        const c = typeof ctx === "function" ? ctx() : null;
+        const fromHost = c && c.extensionPath ? String(c.extensionPath) : "";
+        if (fromHost) push(fromHost.replace(/\/?$/, "/"));
+    } catch (error) { /* 忽略 */ }
+    // 页面上的 <script src> / <link href>：只要落在扩展目录里就收，**不管目录叫什么名字**
+    // （桌面客户端是用 ES 模块方式加载扩展的，此时 document.currentScript 为 null，
+    //   只有靠这些线索 + manifest 探测才能认出自己）
+    try {
+        const doc = (typeof document !== "undefined") ? document : null;
+        if (doc && typeof doc.querySelectorAll === "function") {
+            for (const el of doc.querySelectorAll("script[src]")) {
+                const src = String(el.getAttribute("src") || el.src || "");
+                const at = src.indexOf("/scripts/extensions/");
+                if (at >= 0 && src.lastIndexOf("/") > at) push(src.slice(0, src.lastIndexOf("/") + 1).replace(/dist\/$/, ""));
+            }
+            for (const el of doc.querySelectorAll("link[href]")) {
+                const href = String(el.getAttribute("href") || el.href || "");
+                const at = href.indexOf("/scripts/extensions/");
+                if (at >= 0 && href.lastIndexOf("/") > at) push(href.slice(0, href.lastIndexOf("/") + 1));
+            }
+        }
+    } catch (error) { /* 忽略 */ }
+    push(EXT_PATH);
+    push(LEGACY_BASE);
+    return out;
+}
+
+/** 异步确认自己的目录：逐个候选读 manifest.json，看到本扩展的标记就认下来并覆盖 baseOverride。
+ *  这一步是"目录名任意 / 宿主不给定位信息"时唯一可靠的兜底 —— 否则 data/、assets/、settings.html 全 404。 */
+let discoverPromise = null;
+async function discoverOwnBase() {
+    if (baseOverride) return baseOverride;
+    if (discoverPromise) return discoverPromise;
+    discoverPromise = (async function () {
+        for (const dir of candidateBases()) {
+            try {
+                const res = await fetch(dir + "manifest.json", { cache: "no-store" });
+                if (!res || !res.ok) continue;
+                const text = await res.text();
+                if (text.indexOf(OWN_MARKER) < 0) continue;
+                setOwnBase(dir);
+                log("数据", "扩展目录已确认：" + dir + "（靠 manifest 探测）");
+                return dir;
+            } catch (error) { /* 换下一个候选 */ }
+        }
+        return null;
+    })();
+    return discoverPromise;
+}
+
 
 /** 读扩展自带文本；v2 目录缺失时回退旧目录。 */
 /** 数据文件候选 URL：自身目录优先，其次两个常见目录名（去重） */
@@ -1969,6 +2031,8 @@ function dataCandidates(name) {
 }
 
 async function dataFile(name, fetchImpl) {
+    // ① 先用"手动安装"进 IndexedDB 的那一份（v1 模式；装了就用它，没装就往下走）
+    try { const hit = await idbGet("db:" + String(name || ""), 0); if (hit) return hit; } catch (error) { /* 没有 IndexedDB 就跳过 */ }
     const doFetch = fetchImpl || ((typeof fetch === "function") ? fetch : null);
     if (!doFetch) { log("数据", "读取失败：" + name + "（当前环境没有可用的 fetch）"); return ""; }
     const tried = [];
@@ -2169,7 +2233,7 @@ async function clearAllCache() {
 }
 function hostReady() { const c = ctx(); return !!(c && (c.chat || c.extensionSettings)); }
 
-return { LEGACY_BASE, EXT_PATH, captureSelfBase, ownBase, setOwnBase, dataCandidates, dataFile, fetchJson, cached, clearCache, lazyIndex, IDB_NAME, IDB_STORE, IDB_VERSION, DEFAULT_TTL, idbGet, idbSet, idbDel, idbClear, dataFileCached, idbClearExcept, clearAllCache, hostReady };
+return { LEGACY_BASE, EXT_PATH, captureSelfBase, ownBase, setOwnBase, OWN_MARKER, candidateBases, discoverOwnBase, dataCandidates, dataFile, fetchJson, cached, clearCache, lazyIndex, IDB_NAME, IDB_STORE, IDB_VERSION, DEFAULT_TTL, idbGet, idbSet, idbDel, idbClear, dataFileCached, idbClearExcept, clearAllCache, hostReady };
 });
 
 __def("src/core/registry.js", function (__req) {
@@ -2390,7 +2454,7 @@ return { KEY, DEFAULTS, migrate, read, get, all, reload, save, set, isolationAct
 __def("src/data/art.js", function (__req) {
 const { log } = __req("src/core/bus.js");
 const { registry } = __req("src/core/registry.js");
-const { fetchJson, cached, lazyIndex, ownBase } = __req("src/core/http.js");
+const { fetchJson, cached, lazyIndex, ownBase, dataFile } = __req("src/core/http.js");
 const { settings } = __req("src/core/settings.js");
 const { findCard } = __req("src/data/cards.js");
 const { getStatsIndex } = __req("src/data/indexes.js");
@@ -2412,9 +2476,12 @@ function configure(options) {
 function artIndexUrl() { return ownBase() + "data/art-index.json"; }
 async function readIndexText() {
     if (readText) return await readText("art-index.json");
-    const response = await fetch(artIndexUrl());
-    if (!response.ok) throw new Error("异画索引读取失败 HTTP " + response.status);
-    return await response.text();
+    // ★ 必须走 dataFile：它会先看"手动安装进 IndexedDB"的那份（db:art-index.json），再回退随包 data/ 与旧目录。
+    //   以前这里是裸 fetch(ownBase() + "data/art-index.json")，所以「手动装库」之后异画索引永远读不到
+    //   （自检固定 38/40、异画本地索引与异画卡表两项失败）。
+    const text = await dataFile("art-index.json");
+    if (!text) throw new Error("异画索引读取失败（既没手动安装，随包 data/ 里也没有）");
+    return text;
 }
 const getArtIndex = lazyIndex(async function () {
     const data = JSON.parse(await readIndexText());
@@ -2514,6 +2581,10 @@ function registerArt() {
         if (!trigger) return [];
         if (trigger.action === "artlist") return [{ name: "异画卡表", text: await listAltArtCards(60) }];
         if (trigger.action !== "art") return [];
+        // 解析不到卡就返回空数组：让拦截器退回"自由文本识别"注入这张卡本身的资料；
+        // 以前这里把「没有找到「xxx」。」也当成"找到了资料"返回，反而把兜底路径挡掉。
+        const probe = await artOf(trigger.arg);
+        if (!probe.row) return [];
         return [{ name: "异画", text: await artTextFor(trigger.arg) }];
     });
     log("数据", "异画能力已注册（art）");
@@ -2726,6 +2797,7 @@ return { BOARD_KEY, PHASES, ZONES, SIDE_LABEL, newSide, newBoard, normalizeBoard
 
 __def("src/data/cards.js", function (__req) {
 const { log } = __req("src/core/bus.js");
+const { dbMissingHint, isDbEmpty } = __req("src/data/dbimport.js");
 const { registry } = __req("src/core/registry.js");
 const { settings } = __req("src/core/settings.js");
 const { fetchJson, cached } = __req("src/core/http.js");
@@ -2744,8 +2816,7 @@ function configure(options) { if (options && typeof options.fetchJson === "funct
 function doFetch(url, ms) { return fetchImpl ? fetchImpl(url, ms) : fetchJson(url, {}, ms); }
 
 /** 2) 纯函数 */
-/** 接口返回的 types 是"换行版"（"[怪兽|效果] 念动力/暗\n[★4] 1900/300"），本地卡库与 parseTypeText 用的是 § 分隔；
- *  直接塞进去会让 ATK/DEF 解析不到（parts[1] 为空）并把换行带进注入文本。 */
+/** 接口返回的 types 是"换行版"，本地卡库与 parseTypeText 用的是 § 分隔 */
 function normalizeApiTypes(types) {
     const s = String(types === undefined || types === null ? "" : types);
     if (!s) return "";
@@ -2990,15 +3061,19 @@ async function extrasText(row, options) {
     const lay = layerOf(o);
     const inc = function (key) { return o[key] === undefined ? settings.get(key) !== false : o[key] !== false; };
     const out = [];
-    // 字段（受分层控制）—— 只保留这一处实现：上面曾经还有一份重复的旧块，
-    // 里面的 hit 变量根本没声明（ReferenceError 被 catch 吞掉），整块是死代码，已删除。
+    // 字段（受分层控制）—— 上面曾经还有一份重复的旧块（hit 未声明、整块死代码），已删除
 
     if (inc("includeField") && layerAllows("field", lay) && registry.has("index:setnames")) {
         try {
-            const d0 = await cardDetail(row.id);
-            const raw = d0 && (d0.setcode !== undefined ? d0.setcode : (d0 && d0.data ? d0.data.setcode : null));
+            // ★ 优先用本地卡表里的 setcode（card-stats.tsv 第 5 列就是它）——「字段/系列」本来就该离线可用。
+            //   以前无条件调 cardDetail（在线接口），断网或接口不稳时整行「字段」直接消失，
+            //   用户看到的就是"字段表功能没了"。只有本地行没有 setcode（例如在线兜底新建的行）才去问接口。
+            let raw = row.setcode ? String(row.setcode).trim() : "";
+            if (!raw) {
+                const d0 = await cardDetail(row.id);
+                raw = d0 && (d0.setcode !== undefined ? d0.setcode : (d0 && d0.data ? d0.data.setcode : null));
+            }
             if (raw) {
-                // setcode 是位域：必须按 16 位块逐个查（整值查只能命中单字段卡，577 张多字段卡会整行消失）
                 const sn = await registry.call("index:setnames");
                 const found = fieldNamesWithJpOf(sn, raw);
                 const names = found.cn.slice();
@@ -3007,7 +3082,7 @@ async function extrasText(row, options) {
                     const decoded = await registry.call("decodeSetcodes", { codes: [String(raw)] });
                     if (Array.isArray(decoded)) for (const d of decoded) { const nm = (typeof d === "string") ? d : (d && (d.name || d.cn || d.jp)); if (nm && names.indexOf(nm) < 0) names.push(nm); }
                 }
-                if (names.length) { out.push("字段: " + names.join(" / ") + (jpNames.length ? "（" + jpNames.join(" / ") + "）" : "")); }   // v1 同款：字段: 青眼（青眼の白龍）
+                if (names.length) { out.push("字段: " + names.join(" / ") + (jpNames.length ? "（" + jpNames.join(" / ") + "）" : "")); }
             }
         } catch (error) { /* 卡密取不到就跳过 */ }
     }
@@ -3073,6 +3148,8 @@ async function cardDetail(id, options) {
 
 /** 组合：查卡文本（工具/命令共用） */
 async function cardText(args) {
+    // 卡库没载入时先给"怎么装库"的指引，别让用户只看到"没找到"
+    try { const st0 = await getStatsIndex(); if (isDbEmpty(st0)) return "⚠️ " + dbMissingHint("本地卡库"); } catch (error) { /* 无库时继续走原逻辑 */ }
     const options = args || {};
     const row = await findCard(options.query);
     if (!row) {
@@ -3108,8 +3185,7 @@ function registerCards() {
         if (!rows.length) return "没有匹配「" + String(args.query || "") + "」的卡名。";
         return "「" + String(args.query) + "」匹配 " + rows.length + " 条（显示前 " + rows.length + "）：\n" + rows.map(function (r, i) { return (i + 1) + ". " + r.name + "（" + r.id + "）"; }).join("\n");
     });
-    // ★ 自然语言触发词「查卡 青眼白龙」走这里。触发词表里有 card，但以前没有对应的 runAction:card，
-    //   于是"匹配上了触发词"反而把自由文本兜底也挡掉了 —— 说得越明确越没反应。
+    // ★ 自然语言触发词「查卡 青眼白龙」走这里（以前没有 runAction:card，触发词命中反而什么都不注入）
     registry.provide("runAction:card", async function (trigger) {
         if (!trigger || trigger.action !== "card") return [];
         const q = String(trigger.arg || "").trim();
@@ -3311,8 +3387,6 @@ async function resolveSeriesBySearch(keyword) {
     const confidence = bestCount / counted;
     if (confidence < 0.6) return null;
     const sn = registry.has("index:setnames") ? await registry.call("index:setnames") : null;
-    // 字段表键是"不带 0x 的小写十六进制"（parseSetnames 已剥掉 0x）；
-    // 以前查 sn.get("0x…") 必空、再退化成 sn.get(十进制串) → 张冠李戴（0xa 入魔 会命中键 "10" 薰风）
     const hit = sn && typeof sn.get === "function" ? (sn.get(bestCode.toString(16)) || sn.get("0x" + bestCode.toString(16))) : null;
     const label = typeof hit === "string" ? hit : (hit && hit.cn) || "";
     if (!label) return null;
@@ -3716,6 +3790,349 @@ function registerCollection() {
 const collection = { shopPool, STATS_KEYS, buyCard, aliasMap, resolveAliasName, applyAliasesToText, learnAlias, DIY_CATEGORIES, DIY_MONSTER_FRAMES, parseAliases, applyAliases, diyTypeText, normalizeDiyCard, seededRandom, shopSeed, chatScopeKey, pickSeeded, todayKey, collectionState, addToCollection, collectionText, shopText, aliasText, diyListText, manageDiy, registerCollection };
 
 return { STATS_KEYS, DIY_CATEGORIES, DIY_MONSTER_FRAMES, parseAliases, aliasMap, resolveAliasName, applyAliasesToText, learnAlias, applyAliases, diyTypeText, normalizeDiyCard, seededRandom, shopPool, shopSeed, chatScopeKey, pickSeeded, todayKey, collectionState, addToCollection, buyCard, collectionText, shopText, aliasText, diyListText, manageDiy, registerCollection, collection };
+});
+
+__def("src/data/dbimport.js", function (__req) {
+/**
+ * 手动安装数据库（v1 模式）
+ *
+ * 与 v1 相同的思路：数据库不依赖扩展目录里的 data/，而是**装进 IndexedDB**，
+ * 读取时优先用它（见 http.js 的 dataFile）。适合"另一台设备只拿到扩展、没拿到 data/"的情况。
+ *
+ * 安装方式两种：
+ *   1) 选本地文件（卡名索引 / 卡表 / 字段表 / 异画索引）
+ *   2) 填一个 URL（一行一个文件名或一个目录地址）
+ */
+const { ctx, log } = __req("src/core/bus.js");
+const { registry } = __req("src/core/registry.js");
+const { idbSet, idbGet, idbDel, IDB_NAME, dataFile } = __req("src/core/http.js");
+
+/** 需要安装的四个数据库文件（名字必须与代码里的读取名一致） */
+const DB_FILES = ["card-names.txt", "card-stats.tsv", "setnames.json", "art-index.json"];
+
+/** 每个文件的识别特征（装错文件时能当场发现） */
+const SHAPE = {
+    // 结构化校验：只看"长得像不像"，**不看大小**（旧版写死了 >1000 字符，会把合法的小数据集误判成装错）
+    "card-names.txt": function (t) {
+        const lines = String(t).split("\n").filter(function (x) { return x.trim(); });
+        return lines.length >= 1 && !/\t/.test(t);                       // 每行一个名字，且不该出现制表符
+    },
+    "card-stats.tsv": function (t) {
+        const lines = String(t).split("\n").filter(function (x) { return x.trim(); });
+        for (const line of lines.slice(0, 50)) {
+            const cols = line.split("\t");
+            if (cols.length >= 5 && /^\d{3,}$/.test(cols[0])) return true;   // 首列是卡密、至少 5 列
+        }
+        return false;
+    },
+    "setnames.json": function (t) {
+        try {
+            const o = JSON.parse(t);
+            if (!o || typeof o !== "object" || Array.isArray(o)) return false;
+            const keys = Object.keys(o);
+            if (!keys.length) return false;
+            return typeof o[keys[0]] === "object" && o[keys[0]] !== null;    // 值应是 {cn,jp}
+        } catch (error) { return false; }
+    },
+    "art-index.json": function (t) {
+        try { const o = JSON.parse(t); return !!o && typeof o === "object" && !Array.isArray(o); } catch (error) { return false; }
+    },
+};
+function dbKey(name) { return "db:" + String(name || ""); }
+
+/**
+ * ★ 装库/卸载之后必须做两件事，否则"装完用不了"：
+ *   ① 删掉普通键名（缓存区）里的整份文件缓存 —— 旧的随包副本会盖住刚装的库；
+ *   ② 让内存里的懒索引重建 —— 本会话如果已经查过一次（拿到了"卡库还没载入"），
+ *      空索引会被一直缓存，以前必须刷新页面才生效。
+ */
+async function refreshAfterDbChange(what) {
+    for (const f of DB_FILES) { try { await idbDel(f); } catch (error) { /* 忽略 */ } }
+    try { if (registry.has("index:reset")) await registry.call("index:reset"); } catch (error) { /* 忽略 */ }
+    log("数据库", (what || "数据库变更") + "：索引已重置，下一次查询重新读取");
+    return true;
+}
+
+/** 把一段文本作为某个数据库文件装进 IndexedDB；返回 { ok, error } */
+async function dbImportFromText(name, text) {
+    const file = String(name || "").trim();
+    if (DB_FILES.indexOf(file) < 0) return { ok: false, error: "不认识的文件名：" + file + "（需要：" + DB_FILES.join(" / ") + "）" };
+    const body = String(text || "");
+    if (!body) return { ok: false, error: file + " 内容为空" };
+    const shape = SHAPE[file];
+    if (shape && !shape(body)) return { ok: false, error: file + " 内容不像这个文件（可能选错了；卡名索引应为每行一个名字，卡表应为制表符分隔）" };
+    const ok = await idbSet(dbKey(file), body, 0);
+    if (!ok) return { ok: false, error: "写入 IndexedDB 失败（客户端可能禁用了 IndexedDB）" };
+    log("数据库", "已手动安装：" + file + "（" + Math.round(body.length / 1024) + " KB）");
+    await refreshAfterDbChange("安装 " + file);
+    return { ok: true, bytes: body.length };
+}
+
+/** 当前已安装情况 */
+async function dbInstalled() {
+    const out = [];
+    for (const f of DB_FILES) {
+        const t = await idbGet(dbKey(f), 0).catch(function () { return ""; });
+        out.push({ file: f, bytes: t ? t.length : 0 });
+    }
+    return out;
+}
+
+/** 卸载（清掉手动安装的数据库） */
+async function dbUninstall() {
+    let n = 0;
+    for (const f of DB_FILES) { try { await idbDel(dbKey(f)); n++; } catch (error) { /* 忽略 */ } }
+    await refreshAfterDbChange("卸载手动安装的数据库");
+    return n;
+}
+
+/** 测试：逐个报告"读到了吗、多少条、样例能不能查到" */
+async function dbTestReport() {
+    const lines = ["🧪 数据库自检 · 手动安装 + 随包文件 两级"];
+    const inst = await dbInstalled();
+    const manual = inst.filter(function (x) { return x.bytes > 0; });
+    lines.push("手动安装（IndexedDB）：" + (manual.length ? manual.map(function (x) { return x.file + " " + Math.round(x.bytes / 1024) + "KB"; }).join("、") : "无"));
+    lines.push("读取优先级：IndexedDB → 随包 data/ → 旧版目录");
+    lines.push("");
+    let bad = 0;
+    for (const f of DB_FILES) {
+        const t = await dataFile(f).catch(function () { return ""; });
+        if (!t) { bad++; lines.push("❌ " + f + " —— 读不到（既没手动安装，包里也没有）"); continue; }
+        const shape = SHAPE[f];
+        const like = !shape || shape(t);
+        lines.push((like ? "✅ " : "❌ ") + f + " —— " + Math.round(t.length / 1024) + " KB" + (like ? "" : "（内容不像这个文件）"));
+        if (!like) bad++;
+    }
+    // 真实查询一次，验证索引可用
+    try {
+        const r = await registry.call("tool:card", { query: "青眼白龙" });   // 走注册表：避免与 cards.js 形成循环依赖
+        const ok = String(r).indexOf("89631139") >= 0;
+        if (!ok) bad++;
+        lines.push("");
+        lines.push((ok ? "✅ " : "❌ ") + "实际查询：青眼白龙 → " + (ok ? "89631139 ✓" : String(r).slice(0, 60)));
+    } catch (error) { bad++; lines.push("❌ 实际查询抛错：" + (error && error.message ? error.message : error)); }
+    lines.push("");
+    lines.push(bad === 0 ? "结论：数据库可用 ✓（查卡/卡组/开包等功能均可离线使用）" : "结论：有 " + bad + " 项异常 —— 请用「手动安装数据库」把 4 个文件装上");
+    const text = lines.join(String.fromCharCode(10));
+    log("数据库", "自检完成：" + (bad === 0 ? "全部正常" : bad + " 项异常"));
+    return text;
+}
+
+/** 弹窗选文件 → 逐个安装（浏览器里用 input[type=file]） */
+async function dbPickAndInstall() {
+    const doc = (typeof document !== "undefined") ? document : null;
+    if (!doc) return "当前环境没有 document，无法选文件（可在脚本里调用 runAction:dbImport 传文本）";
+    return await new Promise(function (resolve) {
+        const input = doc.createElement("input");
+        input.type = "file";
+        input.multiple = true;
+        input.accept = ".txt,.tsv,.json,text/plain,application/json";
+        input.style.display = "none";
+        doc.body.appendChild(input);
+        input.addEventListener("change", async function () {
+            const list = input.files ? Array.prototype.slice.call(input.files) : [];
+            const out = [];
+            for (const f of list) {
+                const name = String(f.name || "");
+                if (DB_FILES.indexOf(name) < 0) { out.push("⏭ 跳过 " + name + "（不是需要的 4 个文件之一）"); continue; }
+                const text = await new Promise(function (res) { const r = new FileReader(); r.onload = function () { res(String(r.result || "")); }; r.onerror = function () { res(""); }; r.readAsText(f); });
+                const r = await dbImportFromText(name, text);
+                out.push((r.ok ? "✅ " : "❌ ") + name + (r.ok ? "：" + Math.round((r.bytes || 0) / 1024) + " KB" : "：" + r.error));
+            }
+            try { input.remove(); } catch (error) { /* 忽略 */ }
+            const text = ["📥 手动安装数据库", ""].concat(out).concat(["", "装完请点「测试数据库」验证。"]) .join(String.fromCharCode(10));
+            resolve(text);
+        });
+        input.click();
+    });
+}
+
+/** 从 URL 安装：{ url } 指到一个目录（末尾带 /）或直接给单个文件地址 */
+async function dbImportFromUrl(args) {
+    const base = String((args && args.url) || "").trim();
+    if (!base) return "请填写 URL（目录地址以 / 结尾，或直接给某个文件地址）";
+    const out = [];
+    const one = /\.(txt|tsv|json)$/i.test(base);
+    for (const f of DB_FILES) {
+        if (one && base.indexOf(f) < 0) continue;
+        const url = one ? base : base.replace(/\/?$/, "/") + f;
+        try {
+            const res = await fetch(url);
+            if (!res || !res.ok) { out.push("❌ " + f + "：HTTP " + (res ? res.status : "无响应")); continue; }
+            const text = await res.text();
+            const r = await dbImportFromText(f, text);
+            out.push((r.ok ? "✅ " : "❌ ") + f + (r.ok ? "：" + Math.round((r.bytes || 0) / 1024) + " KB" : "：" + r.error));
+        } catch (error) { out.push("❌ " + f + "：" + (error && error.message ? error.message : error)); }
+    }
+    return ["📥 从 URL 安装数据库", ""].concat(out).join(String.fromCharCode(10));
+}
+
+
+/* ------------------------------------------------------------------ *
+ * 联网自动更新（照搬 v1：百鸽 cards.zip + ygopro strings.conf）
+ *   v1 用纯手写 zip 解析 + 浏览器自带 DecompressionStream，零第三方依赖；
+ *   这里原样搬过来，只是把缓存从 localforage 换成 v2 自己的 IndexedDB 层。
+ * ------------------------------------------------------------------ */
+const DB_INDEX_URL = "https://ygocdb.com/api/v0/cards.zip";
+const DB_SETNAMES_URL = "https://raw.githubusercontent.com/salix5/ygopro/master/strings.conf";
+
+/** 从 cards.zip 里抽出 cards.json 文本（v1 的 inflateCardsJson 原样移植） */
+async function inflateCardsJson(buffer) {
+    const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+    const decoder = new TextDecoder();
+    let eocd = -1;
+    for (let i = buffer.length - 22; i >= Math.max(0, buffer.length - 65558); i--) {
+        if (view.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+    }
+    if (eocd < 0) throw new Error("不是有效的 zip 文件（没找到中央目录）");
+    const count = view.getUint16(eocd + 10, true);
+    let pointer = view.getUint32(eocd + 16, true);
+    for (let i = 0; i < count; i++) {
+        if (view.getUint32(pointer, true) !== 0x02014b50) break;
+        const method = view.getUint16(pointer + 10, true);
+        const compressedSize = view.getUint32(pointer + 20, true);
+        const nameLength = view.getUint16(pointer + 28, true);
+        const extraLength = view.getUint16(pointer + 30, true);
+        const commentLength = view.getUint16(pointer + 32, true);
+        const localOffset = view.getUint32(pointer + 42, true);
+        const name = decoder.decode(buffer.subarray(pointer + 46, pointer + 46 + nameLength));
+        pointer += 46 + nameLength + extraLength + commentLength;
+        if (name.indexOf("cards.json") < 0) continue;
+        const localNameLength = view.getUint16(localOffset + 26, true);
+        const localExtraLength = view.getUint16(localOffset + 28, true);
+        const start = localOffset + 30 + localNameLength + localExtraLength;
+        const data = buffer.subarray(start, start + compressedSize);
+        if (method !== 8) return decoder.decode(data);
+        if (typeof DecompressionStream !== "function") throw new Error("当前客户端不支持 DecompressionStream，无法解压");
+        const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+        return await new Response(stream).text();
+    }
+    throw new Error("zip 里没有找到 cards.json");
+}
+
+/** cards.json → { namesText, statsText }（格式与内置的 card-names.txt / card-stats.tsv 完全一致） */
+function buildDbTextsFromCards(cards) {
+    const fields = ["sc_name", "cn_name", "md_name", "nwbbs_n", "cnocg_n", "jp_name", "en_name"];
+    const names = [];
+    const seen = {};
+    for (const key of Object.keys(cards)) {
+        const card = cards[key];
+        for (const f of fields) {
+            const v = card && card[f];
+            if (typeof v !== "string") continue;
+            const name = v.trim();
+            if (!name) continue;
+            const isLatin = /^[\x00-\x7F]+$/.test(name);
+            if (isLatin ? name.length < 5 : name.length < 2) continue;
+            const key2 = isLatin ? name.toLowerCase() : name;
+            if (seen[key2]) continue;
+            seen[key2] = 1; names.push(key2);
+        }
+    }
+    const statsRows = [];
+    for (const key of Object.keys(cards)) {
+        const card = cards[key];
+        if (!card || !card.id) continue;
+        const displayName = card.sc_name || card.cn_name || card.md_name || card.nwbbs_n || card.cnocg_n || "";
+        const types = String((card.text && card.text.types) || "").split("\n").join("§");
+        const aliasList = [];
+        for (const f of ["sc_name", "cn_name", "md_name", "nwbbs_n", "cnocg_n", "jp_name"]) {
+            const v = String(card[f] || "").trim();
+            if (!v || v === displayName || aliasList.indexOf(v) >= 0) continue;
+            aliasList.push(v);
+        }
+        const setcode = (card.data && card.data.setcode) || 0;
+        statsRows.push(String(card.id) + "\t" + String(card.cid || 0) + "\t" + displayName + "\t" + types + "\t" + String(setcode) + "\t" + String(card.en_name || "").split("\t").join(" ") + "\t" + aliasList.join("|"));
+    }
+    return { namesText: names.join("\n"), statsText: statsRows.join("\n"), nameCount: names.length, statCount: statsRows.length };
+}
+
+/** strings.conf → setnames.json 文本（v1 的 parseSetnames 同款规则） */
+function buildSetnamesJson(text) {
+    const map = {};
+    for (const raw of String(text || "").split("\n")) {
+        const line = raw.replace(/\r$/, "");
+        if (/^\s*#/.test(line)) continue;
+        const m = line.match(/^!setname\s+0x([0-9a-fA-F]+)\s+(.+)$/);
+        if (!m) continue;
+        const code = "0x" + parseInt(m[1], 16).toString(16);
+        if (map[code]) continue;
+        const parts = m[2].split("\t").map(function (x) { return x.trim(); }).filter(Boolean);
+        if (!parts[0]) continue;
+        map[code] = { cn: parts[0], jp: parts[1] || "" };
+    }
+    return { text: JSON.stringify(map), count: Object.keys(map).length };
+}
+
+/** 一键联网更新：下载 cards.zip → 生成卡名索引/卡表 → 存 IndexedDB；再拉 strings.conf → 字段表 */
+async function dbUpdateOnline(args) {
+    const a = args || {};
+    const indexUrl = String(a.indexUrl || "").trim() || DB_INDEX_URL;
+    const setnamesUrl = String(a.setnamesUrl || "").trim() || DB_SETNAMES_URL;
+    const lines = ["🔄 联网更新数据库（v1 同款：百鸽 cards.zip）", ""];
+    let ok = 0;
+    // ① cards.zip → card-names.txt + card-stats.tsv
+    try {
+        log("数据库", "开始下载 " + indexUrl);
+        const res = await fetch(indexUrl, { cache: "no-store" });
+        if (!res || !res.ok) throw new Error("HTTP " + (res ? res.status : "无响应"));
+        const buffer = new Uint8Array(await res.arrayBuffer());
+        lines.push("✅ 下载完成：" + Math.round(buffer.length / 1048576 * 10) / 10 + " MB");
+        const json = await inflateCardsJson(buffer);
+        const cards = JSON.parse(json);
+        const built = buildDbTextsFromCards(cards);
+        const r1 = await dbImportFromText("card-names.txt", built.namesText);
+        const r2 = await dbImportFromText("card-stats.tsv", built.statsText);
+        lines.push((r1.ok ? "✅" : "❌") + " card-names.txt：" + built.nameCount + " 条" + (r1.ok ? "" : " —— " + r1.error));
+        lines.push((r2.ok ? "✅" : "❌") + " card-stats.tsv：" + built.statCount + " 行" + (r2.ok ? "" : " —— " + r2.error));
+        if (r1.ok) ok++; if (r2.ok) ok++;
+    } catch (error) {
+        lines.push("❌ 下载/解压失败：" + (error && error.message ? error.message : error));
+        lines.push("   （若网络不通，可用「📥 安装数据库」手动选文件，或换成镜像地址）");
+    }
+    // ② strings.conf → setnames.json
+    try {
+        const res = await fetch(setnamesUrl, { cache: "no-store" });
+        if (!res || !res.ok) throw new Error("HTTP " + (res ? res.status : "无响应"));
+        const conf = await res.text();
+        const sn = buildSetnamesJson(conf);
+        const r3 = await dbImportFromText("setnames.json", sn.text);
+        lines.push((r3.ok ? "✅" : "❌") + " setnames.json：" + sn.count + " 个字段" + (r3.ok ? "" : " —— " + r3.error));
+        if (r3.ok) ok++;
+    } catch (error) {
+        lines.push("⚠️ 字段表更新失败（不影响其它）：" + (error && error.message ? error.message : error));
+    }
+    lines.push("");
+    lines.push("本次成功 " + ok + "/3 项。点「🧪 测试数据库」确认。");
+    return lines.join(String.fromCharCode(10));
+}
+/** 本地卡库没载入时给人的指引（缺 data/ 又没用联网更新/手动安装时最常见） */
+function dbMissingHint(what) {
+    return String(what || "本地卡库") + "还没载入。请在面板「维护」里任选一种：\n"
+        + "  ① 🔄 联网更新数据库（百鸽） —— 一键下载并解压，最省事\n"
+        + "  ② 📥 安装数据库（手动选文件） —— 选 card-names.txt / card-stats.tsv / setnames.json / art-index.json\n"
+        + "  ③ 🔗 从 URL 安装数据库 —— 给一个目录地址\n"
+        + "装完点「🧪 测试数据库」确认（应显示 4/4 通过）。";
+}
+
+/** 索引是否为空（用于判断"是不是没载入卡库"） */
+function isDbEmpty(stats) {
+    return !stats || !stats.rows || !stats.rows.length;
+}
+function registerDbImport() {
+    registry.provide("runAction:dbImport", async function (a) { return await dbPickAndInstall(); });
+    registry.provide("runAction:dbImportText", async function (a) { const r = await dbImportFromText((a && a.name) || "", (a && a.text) || ""); return r.ok ? "✅ 已安装 " + (a && a.name) : "❌ " + r.error; });
+    registry.provide("runAction:dbImportUrl", async function (a) { return await dbImportFromUrl(a || {}); });
+    registry.provide("runAction:dbTest", async function () { return await dbTestReport(); });
+    registry.provide("runAction:dbUninstall", async function () { const n = await dbUninstall(); return "已卸载手动安装的数据库 " + n + " 项"; });
+    registry.provide("tool:dbtest", async function () { return await dbTestReport(); });
+    registry.provide("runAction:dbUpdateOnline", async function (a) { return await dbUpdateOnline(a || {}); });
+    log("数据库", "手动安装能力已注册（dbImport / dbImportUrl / dbTest / dbUninstall）");
+}
+
+const dbImport = { dbMissingHint, isDbEmpty, DB_FILES, dbKey, refreshAfterDbChange, dbImportFromText, dbInstalled, dbUninstall, dbTestReport, dbPickAndInstall, dbImportFromUrl, dbUpdateOnline, inflateCardsJson, buildDbTextsFromCards, buildSetnamesJson, registerDbImport };
+
+return { DB_FILES, dbKey, refreshAfterDbChange, dbImportFromText, dbInstalled, dbUninstall, dbTestReport, dbPickAndInstall, dbImportFromUrl, DB_INDEX_URL, DB_SETNAMES_URL, inflateCardsJson, buildDbTextsFromCards, buildSetnamesJson, dbUpdateOnline, dbMissingHint, isDbEmpty, registerDbImport, dbImport };
 });
 
 __def("src/data/deck.js", function (__req) {
@@ -4129,7 +4546,7 @@ const { fetchJson, cached, lazyIndex } = __req("src/core/http.js");
 const { getStatsIndex, getSetnames, normalizeKey } = __req("src/data/indexes.js");
 const { addToCollection } = __req("src/data/collection.js");
 const { findCard, imageUrl, parseTypeText } = __req("src/data/cards.js");
-const { splitSetcodes, fieldNameOf } = __req("src/data/setcodes.js");
+const { splitSetcodes } = __req("src/data/setcodes.js");
 
 /** ── 统一模板（数据模块）：常量 → 纯函数 → 懒索引 → register → exports ── */
 
@@ -4275,7 +4692,7 @@ async function rowsToCards(ids) {
     for (const id of ids) {
         const row = stats.byId.get(String(id));
         if (!row) continue;
-        out.push({ id: row.id, cid: row.cid, name: row.name, typeText: row.typeText, image: imageUrl(row.id) });   // 9 位先行卡图源由 imageUrl 统一处理
+        out.push({ id: row.id, cid: row.cid, name: row.name, typeText: row.typeText, image: imageUrl(row.id) });
     }
     return out;
 }
@@ -4357,10 +4774,7 @@ function diyLine(entry, index) {
     return "[" + (index + 1) + "] " + entry.name + "\n" + entry.typeText + (entry.image ? "\n![](" + entry.image + ")" : "\n（DIY 卡，没有卡图）");
 }
 
-/**
- * 抽卡池：把工具声明的筛选条件（kind/attribute/race/atk_min/archetype）真的用上。
- * 以前 drawText 只读 count，模型按 schema 传 kind=魔法 attribute=光 也会拿回全库随机卡。
- */
+/** 抽卡池：把工具声明的 kind/attribute/race/atk_min/archetype 真的用上（以前只读 count） */
 async function drawPoolFor(args) {
     const a = args || {};
     const stats = await getStatsIndex();
@@ -4376,7 +4790,6 @@ async function drawPoolFor(args) {
     if (race) rows = rows.filter(function (r) { return String(r.typeText || "").indexOf(race) >= 0; });
     if (Number.isFinite(atkMin) && atkMin > 0) rows = rows.filter(function (r) { const t = parseTypeText(r.typeText); return t.atk !== "" && !isNaN(Number(t.atk)) && Number(t.atk) >= atkMin; });
     if (archetype) {
-        // 字段：名字/俗称命中 ∪ setcode 位域整块命中（与 cards.js / deck.js 同一套判定）
         const setnames = await getSetnames();
         const key = normalizeKey(archetype);
         const wanted = new Set();
@@ -4404,7 +4817,7 @@ async function drawPoolFor(args) {
     }
     return { pool: poolInPlay(pool, stats), diy: diy, matched: rows.length, filters: { kind: kind, attribute: attribute, race: race, atkMin: Number.isFinite(atkMin) ? atkMin : 0, archetype: archetype } };
 }
-/** 筛选条件 → 一行人类可读文本（结果里明示用了哪些条件，不再"静默忽略"） */
+/** 筛选条件 → 一行人类可读文本 */
 function describeFilters(f) {
     const parts = [];
     if (f.kind) parts.push("类型=" + f.kind);
@@ -4452,8 +4865,8 @@ async function runAction(trigger) {
 
 /** 4b) 注册能力 */
 function registerPacks() {
-    registry.provide("tool:pack", async function (args) { return await openPackText(args || {}); });
-    registry.provide("tool:packlist", async function (args) { return await listPacksText(args || {}); });
+    registry.provide("tool:pack", async function (args) { try { return await openPackText(args || {});; } catch (error) { const m = error && error.message ? error.message : String(error); log("数据", "tool:pack 失败：" + m); return "⚠️ 这个功能需要联网（卡包数据），本次取不到：\n   " + m + "\n请检查网络后重试；若长期失败可稍后再试（接口偶发抽风）。"; } });
+    registry.provide("tool:packlist", async function (args) { try { return await listPacksText(args || {});; } catch (error) { const m = error && error.message ? error.message : String(error); log("数据", "tool:packlist 失败：" + m); return "⚠️ 这个功能需要联网（卡包数据），本次取不到：\n   " + m + "\n请检查网络后重试；若长期失败可稍后再试（接口偶发抽风）。"; } });
     registry.provide("tool:packsearch", async function (args) { return await searchPacksText(args || {}); });
     registry.provide("tool:draw", async function (args) { return await drawText(args || {}); });
     registry.provide("runAction", async function (trigger) { return await runAction(trigger); });
@@ -4814,7 +5227,7 @@ const getLimits = lazyIndex(async function () {
 async function runAction(trigger) {
     const action = trigger && trigger.action;
     const arg = (trigger && trigger.arg) || "";
-    if (action === "banlist") return [{ name: arg ? "禁限状态" : "禁限卡表", text: await banlistText(settings.get("banlistRegion") || "cn", arg) }];
+    if (action === "banlist") return [{ name: arg ? "禁限状态" : "禁限卡表", text: await banlistText("cn", arg) }];
     if (action === "rule") {
         if (!arg) return [];
         const text = await rulingText({ query: arg, limit: 3 });
@@ -4838,7 +5251,7 @@ async function banlistStatusOf(query) {
 function registerRules() {
     registry.provide("runAction:rules", async function (trigger) { return await runAction(trigger); });
     registry.provide("banlistStatusOf", async function (q) { return await banlistStatusOf(q); });
-registry.provide("tool:banlist", async function (args) { return await banlistText(args && args.region, args && (args.query || args.card)); });
+registry.provide("tool:banlist", async function (args) { try { return await banlistText(args && args.region, args && (args.query || args.card));; } catch (error) { const m = error && error.message ? error.message : String(error); log("数据", "tool:banlist 失败：" + m); return "⚠️ 这个功能需要联网（官方禁限表），本次取不到：\n   " + m + "\n请检查网络后重试；若长期失败可稍后再试（接口偶发抽风）。"; } });
     registry.provide("tool:summon", async function (args) { return registry.has("checkSummon") ? await registry.call("checkSummon", args || {}) : await summonText(args || {}); });
     registry.provide("tool:ruling", async function (args) { return await rulingText(args || {}); });
     registry.provide("ruling:cross", async function (args) { return await crossRulingText(args || {}); });
@@ -5446,7 +5859,8 @@ function matchTrigger(text, triggers, hesitation) {
             const wordArg = s.slice(at + w.length).trim();
             if (CARD_ARG_ACTIONS.indexOf(rule.action) >= 0 && wordArg && !looksLikeCardArg(wordArg)) continue;   // 带卡名参数的动作：白话不算卡名
             if (ARG_NUMERIC_ONLY.indexOf(rule.action) >= 0 && wordArg && !/^\d{1,3}$/.test(wordArg)) continue;   // 起手/抽卡：参数只能是张数（防「他起手就赢了」）
-            return { action: rule.action, arg: wordArg, raw: raw, via: "word" };
+            // before = 触发词【前面】那段：中文常把卡名写在触发词前面（「黑魔女异画」），词后取不到参数时用它再试一次。
+            return { action: rule.action, arg: wordArg, before: s.slice(0, at).trim(), raw: raw, via: "word" };
         }
         if (!rule.re) continue;
         const m = rule.re.exec(s);
@@ -5491,14 +5905,14 @@ function allowsFreeText() { return settings.get("triggerMode") === "full"; }
 
 const detect = { normalizeText, TRIGGERS, HESITATION, normalize, matchTrigger, findSegments, allowsFreeText };
 
-return { looksLikeCardArg, TRIGGERS, HESITATION, normalize, normalizeText, matchTrigger, findSegments, allowsFreeText, detect };
+return { looksLikeCardArg, TRIGGERS, HESITATION, normalize, normalizeText, CARD_ARG_ACTIONS, matchTrigger, findSegments, allowsFreeText, detect };
 });
 
 __def("src/inject/interceptor.js", function (__req) {
 const { ctx, log, emit } = __req("src/core/bus.js");
 const { settings } = __req("src/core/settings.js");
 const { registry } = __req("src/core/registry.js");
-const { matchTrigger, findSegments, allowsFreeText } = __req("src/inject/detect.js");
+const { matchTrigger, findSegments, allowsFreeText, CARD_ARG_ACTIONS } = __req("src/inject/detect.js");
 const { buildInjection } = __req("src/inject/build.js");
 
 /** 取最后一次玩家消息（按 scanScope 决定扫哪些）。 */
@@ -5738,6 +6152,20 @@ async function detectOnce(text) {
  * 拦截器按注册顺序依次询问，第一个返回非空结果的即采用。新增模块不需要改这里。
  */
 async function runTrigger(trigger) {
+    // 中文语序：卡名写在触发词前面时（「黑魔女异画」），词后参数是空的 —— 用词前那段补上。
+    // 只对"需要卡名参数"的动作生效（art/rule/card/summon/buy）。
+    if (trigger && !String(trigger.arg || "").trim() && trigger.before && CARD_ARG_ACTIONS.indexOf(trigger.action) >= 0) {
+        let arg = String(trigger.before).trim();
+        // 词前那段往往是俗称/简称（「黑魔女」→ 真名「黑魔女 迪亚贝尔斯塔」）：先过一遍卡名识别，
+        // 而且只在唯一候选时才替换，避免把整句话塞成参数。
+        try {
+            if (arg && registry.has("resolveCards")) {
+                const found = await registry.call("resolveCards", arg);
+                if (Array.isArray(found) && found.length === 1 && found[0] && found[0].name) arg = String(found[0].name);
+            }
+        } catch (error) { /* 用原文再试 */ }
+        trigger = Object.assign({}, trigger, { arg: arg, via: (trigger.via || "") + "+before" });
+    }
     const keys = registry.list().filter(function (k) { return k === "runAction" || k.indexOf("runAction:") === 0; });
     for (const key of keys) {
         try {
@@ -5854,7 +6282,13 @@ async function buildBlock(chat) {
         const cards = await registry.call("resolveCards", text);
         if (!cards || !cards.length) return "";
         const rows = [];
-        for (const c of cards.slice(0, 6)) rows.push("【" + c.name + "】" + String(c.text || "").slice(0, 500));
+        for (const c of cards.slice(0, 6)) {
+            const body = String(c.text || "").slice(0, 500);
+            // 卡面文本本身就以「【卡名】」开头（formatCard 的格式）：以前这里又拼了一次，
+            // 追加到消息里就会变成「【黑魔女 迪亚贝尔斯塔】【黑魔女 迪亚贝尔斯塔】别名: …」。
+            const head = body.indexOf("【") === 0 ? "" : "【" + c.name + "】";
+            rows.push(head + body);
+        }
         // 资料末尾固定附上「仅供参考 / 是否采用由你决定」：与注入路径同一份文案，用户改「提示词 → 判断提示」时两处同时变。
         // 每张卡片行已截断到 500 字，标注不会被挤掉（这条路径没有预算截断）。
         const judge = String(judgeText() || "").trim();
@@ -6609,6 +7043,7 @@ const FIELDS = [
     { group: "查询内容", type: "number", key: "cardImgMax", label: "聊天里卡图最大宽度（像素）", min: 120, max: 900, step: 20 },
     { group: "外部接口", type: "note", label: "外部接口：开着「跟随酒馆主连接」就用你酒馆正在用的模型（不需要任何额外配置）；关掉则用下面填的地址/密钥/模型。触发时先让外部模型处理，再把结果连同卡面数据交给主 AI。" },
     { group: "外部接口", type: "check", key: "apiEnabled", label: "启用外部接口", hint: "总开关。关闭时插件绝不向外发送任何内容（只用本地卡库）。" },
+    { group: "外部接口", type: "select", key: "apiMode", label: "通道选择", hint: "自动＝按可用性挑一条（推荐）；也可以强制指定走哪条通道。", options: [["auto", "自动（推荐：有哪条用哪条）"], ["ttmain", "tt 主连接（用当前主模型）"], ["main", "酒馆助手 generateRaw"], ["secondary", "连接配置（酒馆连接管理器）"], ["route", "自填地址（服务端路由 → 失败自动直连）"], ["direct", "自填地址（客户端直连）"], ["secondary-then-main", "连接配置 → 失败再走主连接"], ["off", "关闭（只用本地数据）"]] },
     { group: "外部接口", type: "check", key: "apiFollowMain", label: "跟随酒馆主连接（地址与模型实时取自主连接，下面填的仅作备用）", hint: "开着＝用你酒馆里正在用的模型；关掉＝只用下面填的地址与模型。" },
     { group: "外部接口", type: "check", key: "apiExternalAiOwnSearch", label: "用外部 AI 时停用插件自主搜索（直接把玩家输入交给外部 AI）", hint: "默认关：本地检索与外部 AI 结果【并存】（卡面、效果、卡图都会给 AI）。勾上则把整句直接交给外部 AI、不再注入本地卡面数据（只保留卡图链接）。" },
     { group: "外部接口", type: "text", key: "apiUrl", label: "接口地址", hint: "例：https://api.deepseek.com（填到 /v1 也行；会自动补 /chat/completions）。跟随主连接时这里只作备用。" },
@@ -6642,6 +7077,7 @@ const FIELDS = [
     { group: "玩法", type: "check", key: "poolLink", label: "抽卡卡池：包含连接", hint: "关掉后不会抽到连接怪兽。" },
     { group: "玩法", type: "button", key: "diyNew", label: "＋ 新建 DIY 卡（图形编辑器）", action: "diyNew" },
     { group: "玩法", type: "button", key: "diyList", label: "我的 DIY 卡（图形列表）", action: "diyList" },
+    { group: "玩法", type: "text", key: "diyFrameBase", label: "自定义卡框目录（留空＝用自带素材）", hint: "填一个以 / 结尾的目录地址（例如你自己的卡框 CDN）；里面需要有 card-normal.webp 等文件。取不到会自动回退成自绘卡面。" },
     { group: "玩法", type: "select", key: "diyFrameMode", label: "DIY 卡面渲染方式", hint: "css＝自绘卡面（默认，永远可用）；real＝真实卡框 PNG（素材已内置；某张加载失败会自动回退 css）。", options: [["css", "自绘卡面（css）"], ["real", "真实卡框 PNG（real）"]] },
     { group: "玩法", type: "button", key: "diyCheckAssets", label: "检查卡框素材", action: "diyCheckAssets" },
     { group: "联动", type: "check", key: "vrmReaction", label: "抽到稀有卡时让 VRM 角色做表情（需装 VRM 扩展）" },
@@ -6654,6 +7090,11 @@ const FIELDS = [
     { group: "查看", type: "button", key: "viewBoard", label: "⚔️ 决斗盘", action: "viewBoard" },
     { group: "查看", type: "button", key: "viewRecap", label: "📜 本局卡表", action: "viewRecap" },
     { group: "维护", type: "button", key: "clearCache", label: "清空缓存（含持久缓存）", action: "clearCache" },
+    { group: "维护", type: "button", key: "dbUpdateOnline", label: "🔄 联网更新数据库（百鸽）", action: "dbUpdateOnline", hint: "照 v1 的做法：下载百鸽 cards.zip（约 2.4MB）→ 解压 → 生成卡名索引与卡表并存进 IndexedDB，再拉 ygopro strings.conf 更新字段表。" },
+    { group: "维护", type: "button", key: "dbImport", label: "📥 安装数据库（手动选文件）", action: "dbImport", hint: "v1 模式：把 卡名索引/卡表/字段表/异画索引 装进 IndexedDB，装了就不依赖 data/ 目录。" },
+    { group: "维护", type: "button", key: "dbImportUrl", label: "🔗 从 URL 安装数据库", action: "dbImportUrl", hint: "给一个目录地址（以 / 结尾）或单个文件地址。" },
+    { group: "维护", type: "button", key: "dbTest", label: "🧪 测试数据库", action: "dbTest", hint: "报告 4 个库各读到多少、来源是手动安装还是随包文件，并真查一张卡。" },
+    { group: "维护", type: "button", key: "dbUninstall", label: "🗑 卸载手动安装的数据库", action: "dbUninstall", hint: "清掉 IndexedDB 里手动装的那份，回到随包 data/。" },
     { group: "维护", type: "button", key: "cacheInfo", label: "查看缓存状态", action: "cacheInfo" },
     { group: "日志", type: "check", key: "logEnabled", label: "启用日志" },
     { group: "日志", type: "check", key: "logToast", label: "注入时弹提示", hint: "每次自动注入都会弹一个小提示，便于确认是否生效。" },
@@ -6693,7 +7134,8 @@ function applyStrictness(level) {
 }
 
 function registerStrictnessAction() {
-    registry.provide("runAction:strictness", async function (args) { return applyStrictness((args && (args.level || args.value)) || "normal"); });
+    // runAction:strictness 由 api/tools.js 统一注册（避免同一能力两处 provide、后注册者覆盖前者
+    // 导致面板版的 "3"/"1" 数字别名失效）；这里只补面板/脚本要用的只读查询与本地应用函数。
     registry.provide("strictness:get", async function () { return String(settings.get("detectStrictness") || "normal"); });
     log("面板", "识别严格程度动作已注册（runAction:strictness）");
 }
@@ -6927,7 +7369,8 @@ function bindControl(f) {
 
 /** 按钮结果的统一出口：无论走哪条路，用户都一定能看到东西（这是"按了没反应"的根因） */
 async function showActionFeedback(field, out) {
-    const text = typeof out === "string" ? out : (out && typeof out.text === "string" ? out.text : "");
+    // out === true 表示"界面已经自己弹出来了"（openShop/openBoard 等），别报成"执行完毕（无输出）"
+    const text = out === true ? "已显示（见弹窗）" : (typeof out === "string" ? out : (out && typeof out.text === "string" ? out.text : ""));
     const key = (field && (field.label || field.key)) || "按钮";
     if (!text) { log("面板", key + "：执行完毕（无输出）"); toast("「" + key + "」执行完毕（无输出）"); return ""; }
     log("面板", key + " → " + text.slice(0, 200));
@@ -7290,10 +7733,11 @@ const { registerRules } = __req("src/data/rules.js");
 const { registerSummon } = __req("src/data/summon.js");
 const { registerExternal, listProfiles: listExternalProfileList } = __req("src/api/external.js");
 const { registerPublicApi, installPublicApi } = __req("src/api/public-api.js");
-const { ownBase, captureSelfBase, clearAllCache } = __req("src/core/http.js");
+const { ownBase, captureSelfBase, discoverOwnBase, clearAllCache } = __req("src/core/http.js");
 var indexes = __req("src/data/indexes.js");
 const { registerPacks } = __req("src/data/packs.js");
 const { registerCollection } = __req("src/data/collection.js");
+const { registerDbImport, dbPickAndInstall, dbImportFromUrl, dbTestReport, dbUninstall, dbUpdateOnline } = __req("src/data/dbimport.js");
 const { registerDeck } = __req("src/data/deck.js");
 const { registerBoard } = __req("src/data/board.js");
 const { registerArt } = __req("src/data/art.js");
@@ -7405,6 +7849,11 @@ const PANEL_ACTIONS = {
         return "共 " + list.length + " 张 DIY 卡：" + list.map(function (x) { return x.name; }).join("、");
     },
     selftest: async function () { return await registry.call("cmd:selftest", {}); },
+    dbImport: async function () { return await dbPickAndInstall(); },
+    dbUpdateOnline: async function () { return await dbUpdateOnline({}); },
+    dbImportUrl: async function () { const c = (typeof SillyTavern !== "undefined" && SillyTavern.getContext) ? SillyTavern.getContext() : null; let url = ""; try { if (c && c.callGenericPopup) url = String(await c.callGenericPopup("", 3, "", { okButton: "安装", cancelButton: "取消" }) || ""); } catch (error) { /* 忽略 */ } if (!url) return "（已取消：没填 URL）"; return await dbImportFromUrl({ url: String(url).trim() }); },
+    dbTest: async function () { return await dbTestReport(); },
+    dbUninstall: async function () { return await dbUninstall(); },
     clearCache: async function () {
         const ok = await clearAllCache();
         // 索引也要一起重建，否则"清完缓存还是旧的"（懒索引只在进程内缓存）
@@ -7472,11 +7921,20 @@ async function boot() {
     installCardImgCss();
     const report = [];
     const missingCaps = [];
+    // ── 自定位：宿主可能用模块/注入方式加载脚本（没有 currentScript）、也不给 extensionPath，
+    //    这时必须靠"探测候选目录的 manifest"确认自己在哪里，否则 data/ 与 assets/ 全部 404。
+    report.push(await step("自定位", async function () {
+        const guess = ownBase();
+        const found = await discoverOwnBase();
+        if (found) { if (found !== guess) log("启动", "扩展目录：" + found + "（原猜测 " + guess + "）"); }
+        else log("启动", "未能自动确认扩展目录，沿用：" + guess);
+        return found || guess;
+    }));
     // ── 数据层
     report.push(await step("数据层", async function () {
         registerIndexes(); registerCards(); registerCardResolver(); registerRules(); registerSummon(); registerExternal();
         registerPublicApi();
-        registerPacks(); registerCollection(); registerDeck(); registerBoard(); registerArt();
+        registerPacks(); registerCollection(); registerDeck(); registerBoard(); registerArt(); registerDbImport();
     }));
     // ── 注入层
     report.push(await step("注入层", async function () {
@@ -7609,7 +8067,7 @@ if (typeof globalThis !== "undefined" && (globalThis.SillyTavern || (ctx() && ct
 return { MODULE_VERSION, PROBE_KEY, probe, INTERCEPTOR_NAME, PANEL_ACTIONS, REQUIRED_CAPS, boot, whenPanelMounted, ygo2Activate, ensureBoot };
 });
 
-try { globalThis.YgoCardLookupV2Build = {"at":"2026-10-06T15:33:58","hash":"9f6a2849","modules":35}; } catch (e) { /* 忽略 */ }
+try { globalThis.YgoCardLookupV2Build = {"at":"2026-10-06T16:23:54","hash":"d972070d","modules":36}; } catch (e) { /* 忽略 */ }
 var __entry = __req("index.js");
 try { globalThis.YgoCardLookupV2 = __entry; } catch (e) { /* 忽略 */ }
 })();

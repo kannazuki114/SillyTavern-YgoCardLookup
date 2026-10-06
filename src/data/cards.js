@@ -1,4 +1,5 @@
 import { log } from "../core/bus.js";
+import { dbMissingHint, isDbEmpty } from "./dbimport.js";
 import { registry } from "../core/registry.js";
 import { settings } from "../core/settings.js";
 import { fetchJson, cached } from "../core/http.js";
@@ -17,8 +18,7 @@ export function configure(options) { if (options && typeof options.fetchJson ===
 function doFetch(url, ms) { return fetchImpl ? fetchImpl(url, ms) : fetchJson(url, {}, ms); }
 
 /** 2) 纯函数 */
-/** 接口返回的 types 是"换行版"（"[怪兽|效果] 念动力/暗\n[★4] 1900/300"），本地卡库与 parseTypeText 用的是 § 分隔；
- *  直接塞进去会让 ATK/DEF 解析不到（parts[1] 为空）并把换行带进注入文本。 */
+/** 接口返回的 types 是"换行版"，本地卡库与 parseTypeText 用的是 § 分隔 */
 export function normalizeApiTypes(types) {
     const s = String(types === undefined || types === null ? "" : types);
     if (!s) return "";
@@ -263,15 +263,19 @@ async function extrasText(row, options) {
     const lay = layerOf(o);
     const inc = function (key) { return o[key] === undefined ? settings.get(key) !== false : o[key] !== false; };
     const out = [];
-    // 字段（受分层控制）—— 只保留这一处实现：上面曾经还有一份重复的旧块，
-    // 里面的 hit 变量根本没声明（ReferenceError 被 catch 吞掉），整块是死代码，已删除。
+    // 字段（受分层控制）—— 上面曾经还有一份重复的旧块（hit 未声明、整块死代码），已删除
 
     if (inc("includeField") && layerAllows("field", lay) && registry.has("index:setnames")) {
         try {
-            const d0 = await cardDetail(row.id);
-            const raw = d0 && (d0.setcode !== undefined ? d0.setcode : (d0 && d0.data ? d0.data.setcode : null));
+            // ★ 优先用本地卡表里的 setcode（card-stats.tsv 第 5 列就是它）——「字段/系列」本来就该离线可用。
+            //   以前无条件调 cardDetail（在线接口），断网或接口不稳时整行「字段」直接消失，
+            //   用户看到的就是"字段表功能没了"。只有本地行没有 setcode（例如在线兜底新建的行）才去问接口。
+            let raw = row.setcode ? String(row.setcode).trim() : "";
+            if (!raw) {
+                const d0 = await cardDetail(row.id);
+                raw = d0 && (d0.setcode !== undefined ? d0.setcode : (d0 && d0.data ? d0.data.setcode : null));
+            }
             if (raw) {
-                // setcode 是位域：必须按 16 位块逐个查（整值查只能命中单字段卡，577 张多字段卡会整行消失）
                 const sn = await registry.call("index:setnames");
                 const found = fieldNamesWithJpOf(sn, raw);
                 const names = found.cn.slice();
@@ -280,7 +284,7 @@ async function extrasText(row, options) {
                     const decoded = await registry.call("decodeSetcodes", { codes: [String(raw)] });
                     if (Array.isArray(decoded)) for (const d of decoded) { const nm = (typeof d === "string") ? d : (d && (d.name || d.cn || d.jp)); if (nm && names.indexOf(nm) < 0) names.push(nm); }
                 }
-                if (names.length) { out.push("字段: " + names.join(" / ") + (jpNames.length ? "（" + jpNames.join(" / ") + "）" : "")); }   // v1 同款：字段: 青眼（青眼の白龍）
+                if (names.length) { out.push("字段: " + names.join(" / ") + (jpNames.length ? "（" + jpNames.join(" / ") + "）" : "")); }
             }
         } catch (error) { /* 卡密取不到就跳过 */ }
     }
@@ -346,6 +350,8 @@ export async function cardDetail(id, options) {
 
 /** 组合：查卡文本（工具/命令共用） */
 export async function cardText(args) {
+    // 卡库没载入时先给"怎么装库"的指引，别让用户只看到"没找到"
+    try { const st0 = await getStatsIndex(); if (isDbEmpty(st0)) return "⚠️ " + dbMissingHint("本地卡库"); } catch (error) { /* 无库时继续走原逻辑 */ }
     const options = args || {};
     const row = await findCard(options.query);
     if (!row) {
@@ -381,8 +387,7 @@ export function registerCards() {
         if (!rows.length) return "没有匹配「" + String(args.query || "") + "」的卡名。";
         return "「" + String(args.query) + "」匹配 " + rows.length + " 条（显示前 " + rows.length + "）：\n" + rows.map(function (r, i) { return (i + 1) + ". " + r.name + "（" + r.id + "）"; }).join("\n");
     });
-    // ★ 自然语言触发词「查卡 青眼白龙」走这里。触发词表里有 card，但以前没有对应的 runAction:card，
-    //   于是"匹配上了触发词"反而把自由文本兜底也挡掉了 —— 说得越明确越没反应。
+    // ★ 自然语言触发词「查卡 青眼白龙」走这里（以前没有 runAction:card，触发词命中反而什么都不注入）
     registry.provide("runAction:card", async function (trigger) {
         if (!trigger || trigger.action !== "card") return [];
         const q = String(trigger.arg || "").trim();
@@ -584,8 +589,6 @@ async function resolveSeriesBySearch(keyword) {
     const confidence = bestCount / counted;
     if (confidence < 0.6) return null;
     const sn = registry.has("index:setnames") ? await registry.call("index:setnames") : null;
-    // 字段表键是"不带 0x 的小写十六进制"（parseSetnames 已剥掉 0x）；
-    // 以前查 sn.get("0x…") 必空、再退化成 sn.get(十进制串) → 张冠李戴（0xa 入魔 会命中键 "10" 薰风）
     const hit = sn && typeof sn.get === "function" ? (sn.get(bestCode.toString(16)) || sn.get("0x" + bestCode.toString(16))) : null;
     const label = typeof hit === "string" ? hit : (hit && hit.cn) || "";
     if (!label) return null;

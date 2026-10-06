@@ -46,6 +46,7 @@ export const FIELDS = [
     { group: "查询内容", type: "number", key: "cardImgMax", label: "聊天里卡图最大宽度（像素）", min: 120, max: 900, step: 20 },
     { group: "外部接口", type: "note", label: "外部接口：开着「跟随酒馆主连接」就用你酒馆正在用的模型（不需要任何额外配置）；关掉则用下面填的地址/密钥/模型。触发时先让外部模型处理，再把结果连同卡面数据交给主 AI。" },
     { group: "外部接口", type: "check", key: "apiEnabled", label: "启用外部接口", hint: "总开关。关闭时插件绝不向外发送任何内容（只用本地卡库）。" },
+    { group: "外部接口", type: "select", key: "apiMode", label: "通道选择", hint: "自动＝按可用性挑一条（推荐）；也可以强制指定走哪条通道。", options: [["auto", "自动（推荐：有哪条用哪条）"], ["ttmain", "tt 主连接（用当前主模型）"], ["main", "酒馆助手 generateRaw"], ["secondary", "连接配置（酒馆连接管理器）"], ["route", "自填地址（服务端路由 → 失败自动直连）"], ["direct", "自填地址（客户端直连）"], ["secondary-then-main", "连接配置 → 失败再走主连接"], ["off", "关闭（只用本地数据）"]] },
     { group: "外部接口", type: "check", key: "apiFollowMain", label: "跟随酒馆主连接（地址与模型实时取自主连接，下面填的仅作备用）", hint: "开着＝用你酒馆里正在用的模型；关掉＝只用下面填的地址与模型。" },
     { group: "外部接口", type: "check", key: "apiExternalAiOwnSearch", label: "用外部 AI 时停用插件自主搜索（直接把玩家输入交给外部 AI）", hint: "默认关：本地检索与外部 AI 结果【并存】（卡面、效果、卡图都会给 AI）。勾上则把整句直接交给外部 AI、不再注入本地卡面数据（只保留卡图链接）。" },
     { group: "外部接口", type: "text", key: "apiUrl", label: "接口地址", hint: "例：https://api.deepseek.com（填到 /v1 也行；会自动补 /chat/completions）。跟随主连接时这里只作备用。" },
@@ -79,6 +80,7 @@ export const FIELDS = [
     { group: "玩法", type: "check", key: "poolLink", label: "抽卡卡池：包含连接", hint: "关掉后不会抽到连接怪兽。" },
     { group: "玩法", type: "button", key: "diyNew", label: "＋ 新建 DIY 卡（图形编辑器）", action: "diyNew" },
     { group: "玩法", type: "button", key: "diyList", label: "我的 DIY 卡（图形列表）", action: "diyList" },
+    { group: "玩法", type: "text", key: "diyFrameBase", label: "自定义卡框目录（留空＝用自带素材）", hint: "填一个以 / 结尾的目录地址（例如你自己的卡框 CDN）；里面需要有 card-normal.webp 等文件。取不到会自动回退成自绘卡面。" },
     { group: "玩法", type: "select", key: "diyFrameMode", label: "DIY 卡面渲染方式", hint: "css＝自绘卡面（默认，永远可用）；real＝真实卡框 PNG（素材已内置；某张加载失败会自动回退 css）。", options: [["css", "自绘卡面（css）"], ["real", "真实卡框 PNG（real）"]] },
     { group: "玩法", type: "button", key: "diyCheckAssets", label: "检查卡框素材", action: "diyCheckAssets" },
     { group: "联动", type: "check", key: "vrmReaction", label: "抽到稀有卡时让 VRM 角色做表情（需装 VRM 扩展）" },
@@ -91,6 +93,11 @@ export const FIELDS = [
     { group: "查看", type: "button", key: "viewBoard", label: "⚔️ 决斗盘", action: "viewBoard" },
     { group: "查看", type: "button", key: "viewRecap", label: "📜 本局卡表", action: "viewRecap" },
     { group: "维护", type: "button", key: "clearCache", label: "清空缓存（含持久缓存）", action: "clearCache" },
+    { group: "维护", type: "button", key: "dbUpdateOnline", label: "🔄 联网更新数据库（百鸽）", action: "dbUpdateOnline", hint: "照 v1 的做法：下载百鸽 cards.zip（约 2.4MB）→ 解压 → 生成卡名索引与卡表并存进 IndexedDB，再拉 ygopro strings.conf 更新字段表。" },
+    { group: "维护", type: "button", key: "dbImport", label: "📥 安装数据库（手动选文件）", action: "dbImport", hint: "v1 模式：把 卡名索引/卡表/字段表/异画索引 装进 IndexedDB，装了就不依赖 data/ 目录。" },
+    { group: "维护", type: "button", key: "dbImportUrl", label: "🔗 从 URL 安装数据库", action: "dbImportUrl", hint: "给一个目录地址（以 / 结尾）或单个文件地址。" },
+    { group: "维护", type: "button", key: "dbTest", label: "🧪 测试数据库", action: "dbTest", hint: "报告 4 个库各读到多少、来源是手动安装还是随包文件，并真查一张卡。" },
+    { group: "维护", type: "button", key: "dbUninstall", label: "🗑 卸载手动安装的数据库", action: "dbUninstall", hint: "清掉 IndexedDB 里手动装的那份，回到随包 data/。" },
     { group: "维护", type: "button", key: "cacheInfo", label: "查看缓存状态", action: "cacheInfo" },
     { group: "日志", type: "check", key: "logEnabled", label: "启用日志" },
     { group: "日志", type: "check", key: "logToast", label: "注入时弹提示", hint: "每次自动注入都会弹一个小提示，便于确认是否生效。" },
@@ -130,7 +137,8 @@ export function applyStrictness(level) {
 }
 
 export function registerStrictnessAction() {
-    registry.provide("runAction:strictness", async function (args) { return applyStrictness((args && (args.level || args.value)) || "normal"); });
+    // runAction:strictness 由 api/tools.js 统一注册（避免同一能力两处 provide、后注册者覆盖前者
+    // 导致面板版的 "3"/"1" 数字别名失效）；这里只补面板/脚本要用的只读查询与本地应用函数。
     registry.provide("strictness:get", async function () { return String(settings.get("detectStrictness") || "normal"); });
     log("面板", "识别严格程度动作已注册（runAction:strictness）");
 }
@@ -364,7 +372,8 @@ export function bindControl(f) {
 
 /** 按钮结果的统一出口：无论走哪条路，用户都一定能看到东西（这是"按了没反应"的根因） */
 export async function showActionFeedback(field, out) {
-    const text = typeof out === "string" ? out : (out && typeof out.text === "string" ? out.text : "");
+    // out === true 表示"界面已经自己弹出来了"（openShop/openBoard 等），别报成"执行完毕（无输出）"
+    const text = out === true ? "已显示（见弹窗）" : (typeof out === "string" ? out : (out && typeof out.text === "string" ? out.text : ""));
     const key = (field && (field.label || field.key)) || "按钮";
     if (!text) { log("面板", key + "：执行完毕（无输出）"); toast("「" + key + "」执行完毕（无输出）"); return ""; }
     log("面板", key + " → " + text.slice(0, 200));

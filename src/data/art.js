@@ -1,6 +1,6 @@
 import { log } from "../core/bus.js";
 import { registry } from "../core/registry.js";
-import { fetchJson, cached, lazyIndex, ownBase } from "../core/http.js";
+import { fetchJson, cached, lazyIndex, ownBase, dataFile } from "../core/http.js";
 import { settings } from "../core/settings.js";
 import { findCard } from "./cards.js";
 import { getStatsIndex } from "./indexes.js";
@@ -22,9 +22,12 @@ export function configure(options) {
 export function artIndexUrl() { return ownBase() + "data/art-index.json"; }
 export async function readIndexText() {
     if (readText) return await readText("art-index.json");
-    const response = await fetch(artIndexUrl());
-    if (!response.ok) throw new Error("异画索引读取失败 HTTP " + response.status);
-    return await response.text();
+    // ★ 必须走 dataFile：它会先看"手动安装进 IndexedDB"的那份（db:art-index.json），再回退随包 data/ 与旧目录。
+    //   以前这里是裸 fetch(ownBase() + "data/art-index.json")，所以「手动装库」之后异画索引永远读不到
+    //   （自检固定 38/40、异画本地索引与异画卡表两项失败）。
+    const text = await dataFile("art-index.json");
+    if (!text) throw new Error("异画索引读取失败（既没手动安装，随包 data/ 里也没有）");
+    return text;
 }
 export const getArtIndex = lazyIndex(async function () {
     const data = JSON.parse(await readIndexText());
@@ -124,6 +127,10 @@ export function registerArt() {
         if (!trigger) return [];
         if (trigger.action === "artlist") return [{ name: "异画卡表", text: await listAltArtCards(60) }];
         if (trigger.action !== "art") return [];
+        // 解析不到卡就返回空数组：让拦截器退回"自由文本识别"注入这张卡本身的资料；
+        // 以前这里把「没有找到「xxx」。」也当成"找到了资料"返回，反而把兜底路径挡掉。
+        const probe = await artOf(trigger.arg);
+        if (!probe.row) return [];
         return [{ name: "异画", text: await artTextFor(trigger.arg) }];
     });
     log("数据", "异画能力已注册（art）");

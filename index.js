@@ -17,10 +17,11 @@ import { registerRules } from "./src/data/rules.js";
 import { registerSummon } from "./src/data/summon.js";
 import { registerExternal, listProfiles as listExternalProfileList } from "./src/api/external.js";
 import { registerPublicApi, installPublicApi } from "./src/api/public-api.js";
-import { ownBase, captureSelfBase, clearAllCache } from "./src/core/http.js";
+import { ownBase, captureSelfBase, discoverOwnBase, clearAllCache } from "./src/core/http.js";
 import * as indexes from "./src/data/indexes.js";
 import { registerPacks } from "./src/data/packs.js";
 import { registerCollection } from "./src/data/collection.js";
+import { registerDbImport, dbPickAndInstall, dbImportFromUrl, dbTestReport, dbUninstall, dbUpdateOnline } from "./src/data/dbimport.js";
 import { registerDeck } from "./src/data/deck.js";
 import { registerBoard } from "./src/data/board.js";
 import { registerArt } from "./src/data/art.js";
@@ -132,6 +133,11 @@ export const PANEL_ACTIONS = {
         return "共 " + list.length + " 张 DIY 卡：" + list.map(function (x) { return x.name; }).join("、");
     },
     selftest: async function () { return await registry.call("cmd:selftest", {}); },
+    dbImport: async function () { return await dbPickAndInstall(); },
+    dbUpdateOnline: async function () { return await dbUpdateOnline({}); },
+    dbImportUrl: async function () { const c = (typeof SillyTavern !== "undefined" && SillyTavern.getContext) ? SillyTavern.getContext() : null; let url = ""; try { if (c && c.callGenericPopup) url = String(await c.callGenericPopup("", 3, "", { okButton: "安装", cancelButton: "取消" }) || ""); } catch (error) { /* 忽略 */ } if (!url) return "（已取消：没填 URL）"; return await dbImportFromUrl({ url: String(url).trim() }); },
+    dbTest: async function () { return await dbTestReport(); },
+    dbUninstall: async function () { return await dbUninstall(); },
     clearCache: async function () {
         const ok = await clearAllCache();
         // 索引也要一起重建，否则"清完缓存还是旧的"（懒索引只在进程内缓存）
@@ -199,11 +205,20 @@ async function boot() {
     installCardImgCss();
     const report = [];
     const missingCaps = [];
+    // ── 自定位：宿主可能用模块/注入方式加载脚本（没有 currentScript）、也不给 extensionPath，
+    //    这时必须靠"探测候选目录的 manifest"确认自己在哪里，否则 data/ 与 assets/ 全部 404。
+    report.push(await step("自定位", async function () {
+        const guess = ownBase();
+        const found = await discoverOwnBase();
+        if (found) { if (found !== guess) log("启动", "扩展目录：" + found + "（原猜测 " + guess + "）"); }
+        else log("启动", "未能自动确认扩展目录，沿用：" + guess);
+        return found || guess;
+    }));
     // ── 数据层
     report.push(await step("数据层", async function () {
         registerIndexes(); registerCards(); registerCardResolver(); registerRules(); registerSummon(); registerExternal();
         registerPublicApi();
-        registerPacks(); registerCollection(); registerDeck(); registerBoard(); registerArt();
+        registerPacks(); registerCollection(); registerDeck(); registerBoard(); registerArt(); registerDbImport();
     }));
     // ── 注入层
     report.push(await step("注入层", async function () {

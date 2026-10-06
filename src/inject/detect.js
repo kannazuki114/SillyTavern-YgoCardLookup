@@ -75,7 +75,7 @@ export function normalizeText(text) {
 // 需要"卡名参数"才成立的动作（v1 对这些用 looksLikeCardArg 挡白话）
 // 这些动作的参数只允许"空或数字"（避免「他起手就赢了」这类日常句误触发）
 const ARG_NUMERIC_ONLY = ["hand", "draw"];
-const CARD_ARG_ACTIONS = ["art", "buy", "card", "rule", "summon"];
+export const CARD_ARG_ACTIONS = ["art", "buy", "card", "rule", "summon"];
 
 export function matchTrigger(text, triggers, hesitation) {
     const raw = String(text || "").trim();
@@ -92,7 +92,8 @@ export function matchTrigger(text, triggers, hesitation) {
             const wordArg = s.slice(at + w.length).trim();
             if (CARD_ARG_ACTIONS.indexOf(rule.action) >= 0 && wordArg && !looksLikeCardArg(wordArg)) continue;   // 带卡名参数的动作：白话不算卡名
             if (ARG_NUMERIC_ONLY.indexOf(rule.action) >= 0 && wordArg && !/^\d{1,3}$/.test(wordArg)) continue;   // 起手/抽卡：参数只能是张数（防「他起手就赢了」）
-            return { action: rule.action, arg: wordArg, raw: raw, via: "word" };
+            // before = 触发词【前面】那段：中文常把卡名写在触发词前面（「黑魔女异画」），词后取不到参数时用它再试一次。
+            return { action: rule.action, arg: wordArg, before: s.slice(0, at).trim(), raw: raw, via: "word" };
         }
         if (!rule.re) continue;
         const m = rule.re.exec(s);

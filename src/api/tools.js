@@ -112,7 +112,9 @@ export function registerTools() {
     try {
         registry.provide("runAction:strictness", async function (args) {
             const key = String((args && (args.level || args.value)) || "normal").trim().toLowerCase();
-            const value = (key === "strict" || key === "最严格") ? "strict" : ((key === "loose" || key === "宽松") ? "loose" : "normal");
+            // 与 panel.js 的 applyStrictness 同一套别名（含 "3"/"1" 数字档），避免两处实现不一致
+            const value = (key === "strict" || key === "最严格" || key === "3") ? "strict"
+                : ((key === "loose" || key === "宽松" || key === "1") ? "loose" : "normal");
             settings.set("detectStrictness", value);
             log("工具", "识别严格程度 = " + value);
             return "识别严格程度 = " + value + (value === "strict" ? "（最严格：只认完整卡名）" : value === "loose" ? "（宽松：尽量多命中）" : "（适中：允许够具体的名字片段）");

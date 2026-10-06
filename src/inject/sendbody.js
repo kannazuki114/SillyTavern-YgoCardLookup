@@ -97,7 +97,13 @@ export async function buildBlock(chat) {
         const cards = await registry.call("resolveCards", text);
         if (!cards || !cards.length) return "";
         const rows = [];
-        for (const c of cards.slice(0, 6)) rows.push("【" + c.name + "】" + String(c.text || "").slice(0, 500));
+        for (const c of cards.slice(0, 6)) {
+            const body = String(c.text || "").slice(0, 500);
+            // 卡面文本本身就以「【卡名】」开头（formatCard 的格式）：以前这里又拼了一次，
+            // 追加到消息里就会变成「【黑魔女 迪亚贝尔斯塔】【黑魔女 迪亚贝尔斯塔】别名: …」。
+            const head = body.indexOf("【") === 0 ? "" : "【" + c.name + "】";
+            rows.push(head + body);
+        }
         // 资料末尾固定附上「仅供参考 / 是否采用由你决定」：与注入路径同一份文案，用户改「提示词 → 判断提示」时两处同时变。
         // 每张卡片行已截断到 500 字，标注不会被挤掉（这条路径没有预算截断）。
         const judge = String(judgeText() || "").trim();

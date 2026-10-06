@@ -308,7 +308,7 @@ export const getLimits = lazyIndex(async function () {
 export async function runAction(trigger) {
     const action = trigger && trigger.action;
     const arg = (trigger && trigger.arg) || "";
-    if (action === "banlist") return [{ name: arg ? "禁限状态" : "禁限卡表", text: await banlistText(settings.get("banlistRegion") || "cn", arg) }];
+    if (action === "banlist") return [{ name: arg ? "禁限状态" : "禁限卡表", text: await banlistText("cn", arg) }];
     if (action === "rule") {
         if (!arg) return [];
         const text = await rulingText({ query: arg, limit: 3 });
@@ -332,7 +332,7 @@ export async function banlistStatusOf(query) {
 export function registerRules() {
     registry.provide("runAction:rules", async function (trigger) { return await runAction(trigger); });
     registry.provide("banlistStatusOf", async function (q) { return await banlistStatusOf(q); });
-registry.provide("tool:banlist", async function (args) { return await banlistText(args && args.region, args && (args.query || args.card)); });
+registry.provide("tool:banlist", async function (args) { try { return await banlistText(args && args.region, args && (args.query || args.card));; } catch (error) { const m = error && error.message ? error.message : String(error); log("数据", "tool:banlist 失败：" + m); return "⚠️ 这个功能需要联网（官方禁限表），本次取不到：\n   " + m + "\n请检查网络后重试；若长期失败可稍后再试（接口偶发抽风）。"; } });
     registry.provide("tool:summon", async function (args) { return registry.has("checkSummon") ? await registry.call("checkSummon", args || {}) : await summonText(args || {}); });
     registry.provide("tool:ruling", async function (args) { return await rulingText(args || {}); });
     registry.provide("ruling:cross", async function (args) { return await crossRulingText(args || {}); });

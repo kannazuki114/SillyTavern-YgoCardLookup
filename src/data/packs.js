@@ -5,7 +5,7 @@ import { fetchJson, cached, lazyIndex } from "../core/http.js";
 import { getStatsIndex, getSetnames, normalizeKey } from "./indexes.js";
 import { addToCollection } from "./collection.js";
 import { findCard, imageUrl, parseTypeText } from "./cards.js";
-import { splitSetcodes, fieldNameOf } from "./setcodes.js";
+import { splitSetcodes } from "./setcodes.js";
 
 /** ── 统一模板（数据模块）：常量 → 纯函数 → 懒索引 → register → exports ── */
 
@@ -151,7 +151,7 @@ async function rowsToCards(ids) {
     for (const id of ids) {
         const row = stats.byId.get(String(id));
         if (!row) continue;
-        out.push({ id: row.id, cid: row.cid, name: row.name, typeText: row.typeText, image: imageUrl(row.id) });   // 9 位先行卡图源由 imageUrl 统一处理
+        out.push({ id: row.id, cid: row.cid, name: row.name, typeText: row.typeText, image: imageUrl(row.id) });
     }
     return out;
 }
@@ -233,10 +233,7 @@ function diyLine(entry, index) {
     return "[" + (index + 1) + "] " + entry.name + "\n" + entry.typeText + (entry.image ? "\n![](" + entry.image + ")" : "\n（DIY 卡，没有卡图）");
 }
 
-/**
- * 抽卡池：把工具声明的筛选条件（kind/attribute/race/atk_min/archetype）真的用上。
- * 以前 drawText 只读 count，模型按 schema 传 kind=魔法 attribute=光 也会拿回全库随机卡。
- */
+/** 抽卡池：把工具声明的 kind/attribute/race/atk_min/archetype 真的用上（以前只读 count） */
 export async function drawPoolFor(args) {
     const a = args || {};
     const stats = await getStatsIndex();
@@ -252,7 +249,6 @@ export async function drawPoolFor(args) {
     if (race) rows = rows.filter(function (r) { return String(r.typeText || "").indexOf(race) >= 0; });
     if (Number.isFinite(atkMin) && atkMin > 0) rows = rows.filter(function (r) { const t = parseTypeText(r.typeText); return t.atk !== "" && !isNaN(Number(t.atk)) && Number(t.atk) >= atkMin; });
     if (archetype) {
-        // 字段：名字/俗称命中 ∪ setcode 位域整块命中（与 cards.js / deck.js 同一套判定）
         const setnames = await getSetnames();
         const key = normalizeKey(archetype);
         const wanted = new Set();
@@ -280,7 +276,7 @@ export async function drawPoolFor(args) {
     }
     return { pool: poolInPlay(pool, stats), diy: diy, matched: rows.length, filters: { kind: kind, attribute: attribute, race: race, atkMin: Number.isFinite(atkMin) ? atkMin : 0, archetype: archetype } };
 }
-/** 筛选条件 → 一行人类可读文本（结果里明示用了哪些条件，不再"静默忽略"） */
+/** 筛选条件 → 一行人类可读文本 */
 export function describeFilters(f) {
     const parts = [];
     if (f.kind) parts.push("类型=" + f.kind);
@@ -328,8 +324,8 @@ export async function runAction(trigger) {
 
 /** 4b) 注册能力 */
 export function registerPacks() {
-    registry.provide("tool:pack", async function (args) { return await openPackText(args || {}); });
-    registry.provide("tool:packlist", async function (args) { return await listPacksText(args || {}); });
+    registry.provide("tool:pack", async function (args) { try { return await openPackText(args || {});; } catch (error) { const m = error && error.message ? error.message : String(error); log("数据", "tool:pack 失败：" + m); return "⚠️ 这个功能需要联网（卡包数据），本次取不到：\n   " + m + "\n请检查网络后重试；若长期失败可稍后再试（接口偶发抽风）。"; } });
+    registry.provide("tool:packlist", async function (args) { try { return await listPacksText(args || {});; } catch (error) { const m = error && error.message ? error.message : String(error); log("数据", "tool:packlist 失败：" + m); return "⚠️ 这个功能需要联网（卡包数据），本次取不到：\n   " + m + "\n请检查网络后重试；若长期失败可稍后再试（接口偶发抽风）。"; } });
     registry.provide("tool:packsearch", async function (args) { return await searchPacksText(args || {}); });
     registry.provide("tool:draw", async function (args) { return await drawText(args || {}); });
     registry.provide("runAction", async function (trigger) { return await runAction(trigger); });

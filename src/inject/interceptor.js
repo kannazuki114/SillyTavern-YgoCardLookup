@@ -1,7 +1,7 @@
 import { ctx, log, emit } from "../core/bus.js";
 import { settings } from "../core/settings.js";
 import { registry } from "../core/registry.js";
-import { matchTrigger, findSegments, allowsFreeText } from "./detect.js";
+import { matchTrigger, findSegments, allowsFreeText, CARD_ARG_ACTIONS } from "./detect.js";
 import { buildInjection } from "./build.js";
 
 /** 取最后一次玩家消息（按 scanScope 决定扫哪些）。 */
@@ -241,6 +241,20 @@ export async function detectOnce(text) {
  * 拦截器按注册顺序依次询问，第一个返回非空结果的即采用。新增模块不需要改这里。
  */
 export async function runTrigger(trigger) {
+    // 中文语序：卡名写在触发词前面时（「黑魔女异画」），词后参数是空的 —— 用词前那段补上。
+    // 只对"需要卡名参数"的动作生效（art/rule/card/summon/buy）。
+    if (trigger && !String(trigger.arg || "").trim() && trigger.before && CARD_ARG_ACTIONS.indexOf(trigger.action) >= 0) {
+        let arg = String(trigger.before).trim();
+        // 词前那段往往是俗称/简称（「黑魔女」→ 真名「黑魔女 迪亚贝尔斯塔」）：先过一遍卡名识别，
+        // 而且只在唯一候选时才替换，避免把整句话塞成参数。
+        try {
+            if (arg && registry.has("resolveCards")) {
+                const found = await registry.call("resolveCards", arg);
+                if (Array.isArray(found) && found.length === 1 && found[0] && found[0].name) arg = String(found[0].name);
+            }
+        } catch (error) { /* 用原文再试 */ }
+        trigger = Object.assign({}, trigger, { arg: arg, via: (trigger.via || "") + "+before" });
+    }
     const keys = registry.list().filter(function (k) { return k === "runAction" || k.indexOf("runAction:") === 0; });
     for (const key of keys) {
         try {

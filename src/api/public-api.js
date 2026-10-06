@@ -34,7 +34,7 @@ function emitApi(event, payload) {
 export function actions() {
     const out = [];
     for (const key of registry.list()) {
-        const m = /^(?:runAction|tool|cmd|ui):(.+)$/.exec(String(key));   // ui: 也暴露（sendbox/buy/collection…），酒馆助手脚本直接按动作名调
+        const m = /^(?:runAction|tool|cmd|ui):(.+)$/.exec(String(key));   // ui: 也暴露（sendbox/buy/collection…）
         if (m && out.indexOf(m[1]) < 0) out.push(m[1]);
     }
     for (const k of Object.keys(customActions)) if (out.indexOf(k) < 0) out.push(k);
