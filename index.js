@@ -21,6 +21,7 @@ import { ownBase, clearAllCache } from "./src/core/http.js";
 import * as indexes from "./src/data/indexes.js";
 import { registerPacks } from "./src/data/packs.js";
 import { registerCollection } from "./src/data/collection.js";
+import { registerDbImport, dbPickAndInstall, dbImportFromUrl, dbTestReport, dbUninstall } from "./src/data/dbimport.js";
 import { registerDeck } from "./src/data/deck.js";
 import { registerBoard } from "./src/data/board.js";
 import { registerArt } from "./src/data/art.js";
@@ -127,6 +128,10 @@ export const PANEL_ACTIONS = {
         return "共 " + list.length + " 张 DIY 卡：" + list.map(function (x) { return x.name; }).join("、");
     },
     selftest: async function () { return await registry.call("cmd:selftest", {}); },
+    dbImport: async function () { return await dbPickAndInstall(); },
+    dbImportUrl: async function () { const c = (typeof SillyTavern !== "undefined" && SillyTavern.getContext) ? SillyTavern.getContext() : null; let url = ""; try { if (c && c.callGenericPopup) url = String(await c.callGenericPopup("", 3, "", { okButton: "安装", cancelButton: "取消" }) || ""); } catch (error) { /* 忽略 */ } if (!url) return "（已取消：没填 URL）"; return await dbImportFromUrl({ url: String(url).trim() }); },
+    dbTest: async function () { return await dbTestReport(); },
+    dbUninstall: async function () { return await dbUninstall(); },
     clearCache: async function () { const ok = await clearAllCache(); return ok ? "✅ 缓存已清空（内存 + 持久）" : "内存缓存已清空；当前环境没有 IndexedDB，没有持久缓存可清。"; },
     cacheInfo: async function () {
         const caps = await registry.call("external:capability");
@@ -192,7 +197,7 @@ async function boot() {
     report.push(await step("数据层", async function () {
         registerIndexes(); registerCards(); registerCardResolver(); registerRules(); registerSummon(); registerExternal();
         registerPublicApi();
-        registerPacks(); registerCollection(); registerDeck(); registerBoard(); registerArt();
+        registerPacks(); registerCollection(); registerDeck(); registerBoard(); registerArt(); registerDbImport();
     }));
     // ── 注入层
     report.push(await step("注入层", async function () {

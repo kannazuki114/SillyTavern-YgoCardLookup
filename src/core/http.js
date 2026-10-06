@@ -54,6 +54,8 @@ export function dataCandidates(name) {
 }
 
 export async function dataFile(name, fetchImpl) {
+    // ① 先用"手动安装"进 IndexedDB 的那一份（v1 模式；装了就用它，没装就往下走）
+    try { const hit = await idbGet("db:" + String(name || ""), 0); if (hit) return hit; } catch (error) { /* 没有 IndexedDB 就跳过 */ }
     const doFetch = fetchImpl || ((typeof fetch === "function") ? fetch : null);
     if (!doFetch) { log("数据", "读取失败：" + name + "（当前环境没有可用的 fetch）"); return ""; }
     const tried = [];

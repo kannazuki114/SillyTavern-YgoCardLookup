@@ -1,6 +1,6 @@
 /*! 游戏王查卡器 v2 —— 单文件打包产物（经典脚本，无 import/export）。
  *  由 tools/bundle.mjs 生成；请勿直接修改本文件，改 src/ 后重新打包。
- *  模块数：34，import：178 处，export：490 处。
+ *  模块数：35，import：183 处，export：500 处。
  */
 (function () {
 'use strict';
@@ -1848,6 +1848,8 @@ function dataCandidates(name) {
 }
 
 async function dataFile(name, fetchImpl) {
+    // ① 先用"手动安装"进 IndexedDB 的那一份（v1 模式；装了就用它，没装就往下走）
+    try { const hit = await idbGet("db:" + String(name || ""), 0); if (hit) return hit; } catch (error) { /* 没有 IndexedDB 就跳过 */ }
     const doFetch = fetchImpl || ((typeof fetch === "function") ? fetch : null);
     if (!doFetch) { log("数据", "读取失败：" + name + "（当前环境没有可用的 fetch）"); return ""; }
     const tried = [];
@@ -3566,6 +3568,162 @@ function registerCollection() {
 const collection = { shopPool, STATS_KEYS, buyCard, aliasMap, resolveAliasName, applyAliasesToText, learnAlias, DIY_CATEGORIES, DIY_MONSTER_FRAMES, parseAliases, applyAliases, diyTypeText, normalizeDiyCard, seededRandom, shopSeed, chatScopeKey, pickSeeded, todayKey, collectionState, addToCollection, collectionText, shopText, aliasText, diyListText, manageDiy, registerCollection };
 
 return { STATS_KEYS, DIY_CATEGORIES, DIY_MONSTER_FRAMES, parseAliases, aliasMap, resolveAliasName, applyAliasesToText, learnAlias, applyAliases, diyTypeText, normalizeDiyCard, seededRandom, shopPool, shopSeed, chatScopeKey, pickSeeded, todayKey, collectionState, addToCollection, buyCard, collectionText, shopText, aliasText, diyListText, manageDiy, registerCollection, collection };
+});
+
+__def("src/data/dbimport.js", function (__req) {
+/**
+ * 手动安装数据库（v1 模式）
+ *
+ * 与 v1 相同的思路：数据库不依赖扩展目录里的 data/，而是**装进 IndexedDB**，
+ * 读取时优先用它（见 http.js 的 dataFile）。适合"另一台设备只拿到扩展、没拿到 data/"的情况。
+ *
+ * 安装方式两种：
+ *   1) 选本地文件（卡名索引 / 卡表 / 字段表 / 异画索引）
+ *   2) 填一个 URL（一行一个文件名或一个目录地址）
+ */
+const { ctx, log } = __req("src/core/bus.js");
+const { registry } = __req("src/core/registry.js");
+const { idbSet, idbGet, idbDel, IDB_NAME, dataFile } = __req("src/core/http.js");
+const { cardText } = __req("src/data/cards.js");
+
+/** 需要安装的四个数据库文件（名字必须与代码里的读取名一致） */
+const DB_FILES = ["card-names.txt", "card-stats.tsv", "setnames.json", "art-index.json"];
+
+/** 每个文件的识别特征（装错文件时能当场发现） */
+const SHAPE = {
+    "card-names.txt": function (t) { return t.indexOf("\n") > 0 && t.length > 1000 && t.indexOf("\t") < 0; },
+    "card-stats.tsv": function (t) { return t.indexOf("\t") > 0 && /\t\d+\t/.test(t) && t.length > 1000; },
+    "setnames.json": function (t) { try { const o = JSON.parse(t); return o && typeof o === "object" && Object.keys(o).length > 50; } catch (error) { return false; } },
+    "art-index.json": function (t) { try { const o = JSON.parse(t); return o && typeof o === "object" && Object.keys(o).length > 10; } catch (error) { return false; } },
+};
+
+function dbKey(name) { return "db:" + String(name || ""); }
+
+/** 把一段文本作为某个数据库文件装进 IndexedDB；返回 { ok, error } */
+async function dbImportFromText(name, text) {
+    const file = String(name || "").trim();
+    if (DB_FILES.indexOf(file) < 0) return { ok: false, error: "不认识的文件名：" + file + "（需要：" + DB_FILES.join(" / ") + "）" };
+    const body = String(text || "");
+    if (!body) return { ok: false, error: file + " 内容为空" };
+    const shape = SHAPE[file];
+    if (shape && !shape(body)) return { ok: false, error: file + " 内容不像这个文件（可能选错了；卡名索引应为每行一个名字，卡表应为制表符分隔）" };
+    const ok = await idbSet(dbKey(file), body, 0);
+    if (!ok) return { ok: false, error: "写入 IndexedDB 失败（客户端可能禁用了 IndexedDB）" };
+    log("数据库", "已手动安装：" + file + "（" + Math.round(body.length / 1024) + " KB）");
+    return { ok: true, bytes: body.length };
+}
+
+/** 当前已安装情况 */
+async function dbInstalled() {
+    const out = [];
+    for (const f of DB_FILES) {
+        const t = await idbGet(dbKey(f), 0).catch(function () { return ""; });
+        out.push({ file: f, bytes: t ? t.length : 0 });
+    }
+    return out;
+}
+
+/** 卸载（清掉手动安装的数据库） */
+async function dbUninstall() {
+    let n = 0;
+    for (const f of DB_FILES) { try { await idbDel(dbKey(f)); n++; } catch (error) { /* 忽略 */ } }
+    return n;
+}
+
+/** 测试：逐个报告"读到了吗、多少条、样例能不能查到" */
+async function dbTestReport() {
+    const lines = ["🧪 数据库自检 · 手动安装 + 随包文件 两级"];
+    const inst = await dbInstalled();
+    const manual = inst.filter(function (x) { return x.bytes > 0; });
+    lines.push("手动安装（IndexedDB）：" + (manual.length ? manual.map(function (x) { return x.file + " " + Math.round(x.bytes / 1024) + "KB"; }).join("、") : "无"));
+    lines.push("读取优先级：IndexedDB → 随包 data/ → 旧版目录");
+    lines.push("");
+    let bad = 0;
+    for (const f of DB_FILES) {
+        const t = await dataFile(f).catch(function () { return ""; });
+        if (!t) { bad++; lines.push("❌ " + f + " —— 读不到（既没手动安装，包里也没有）"); continue; }
+        const shape = SHAPE[f];
+        const like = !shape || shape(t);
+        lines.push((like ? "✅ " : "❌ ") + f + " —— " + Math.round(t.length / 1024) + " KB" + (like ? "" : "（内容不像这个文件）"));
+        if (!like) bad++;
+    }
+    // 真实查询一次，验证索引可用
+    try {
+        const r = await cardText({ query: "青眼白龙" });
+        const ok = String(r).indexOf("89631139") >= 0;
+        if (!ok) bad++;
+        lines.push("");
+        lines.push((ok ? "✅ " : "❌ ") + "实际查询：青眼白龙 → " + (ok ? "89631139 ✓" : String(r).slice(0, 60)));
+    } catch (error) { bad++; lines.push("❌ 实际查询抛错：" + (error && error.message ? error.message : error)); }
+    lines.push("");
+    lines.push(bad === 0 ? "结论：数据库可用 ✓（查卡/卡组/开包等功能均可离线使用）" : "结论：有 " + bad + " 项异常 —— 请用「手动安装数据库」把 4 个文件装上");
+    const text = lines.join(String.fromCharCode(10));
+    log("数据库", "自检完成：" + (bad === 0 ? "全部正常" : bad + " 项异常"));
+    return text;
+}
+
+/** 弹窗选文件 → 逐个安装（浏览器里用 input[type=file]） */
+async function dbPickAndInstall() {
+    const doc = (typeof document !== "undefined") ? document : null;
+    if (!doc) return "当前环境没有 document，无法选文件（可在脚本里调用 runAction:dbImport 传文本）";
+    return await new Promise(function (resolve) {
+        const input = doc.createElement("input");
+        input.type = "file";
+        input.multiple = true;
+        input.accept = ".txt,.tsv,.json,text/plain,application/json";
+        input.style.display = "none";
+        doc.body.appendChild(input);
+        input.addEventListener("change", async function () {
+            const list = input.files ? Array.prototype.slice.call(input.files) : [];
+            const out = [];
+            for (const f of list) {
+                const name = String(f.name || "");
+                if (DB_FILES.indexOf(name) < 0) { out.push("⏭ 跳过 " + name + "（不是需要的 4 个文件之一）"); continue; }
+                const text = await new Promise(function (res) { const r = new FileReader(); r.onload = function () { res(String(r.result || "")); }; r.onerror = function () { res(""); }; r.readAsText(f); });
+                const r = await dbImportFromText(name, text);
+                out.push((r.ok ? "✅ " : "❌ ") + name + (r.ok ? "：" + Math.round((r.bytes || 0) / 1024) + " KB" : "：" + r.error));
+            }
+            try { input.remove(); } catch (error) { /* 忽略 */ }
+            const text = ["📥 手动安装数据库", ""].concat(out).concat(["", "装完请点「测试数据库」验证。"]) .join(String.fromCharCode(10));
+            resolve(text);
+        });
+        input.click();
+    });
+}
+
+/** 从 URL 安装：{ url } 指到一个目录（末尾带 /）或直接给单个文件地址 */
+async function dbImportFromUrl(args) {
+    const base = String((args && args.url) || "").trim();
+    if (!base) return "请填写 URL（目录地址以 / 结尾，或直接给某个文件地址）";
+    const out = [];
+    const one = /\.(txt|tsv|json)$/i.test(base);
+    for (const f of DB_FILES) {
+        if (one && base.indexOf(f) < 0) continue;
+        const url = one ? base : base.replace(/\/?$/, "/") + f;
+        try {
+            const res = await fetch(url);
+            if (!res || !res.ok) { out.push("❌ " + f + "：HTTP " + (res ? res.status : "无响应")); continue; }
+            const text = await res.text();
+            const r = await dbImportFromText(f, text);
+            out.push((r.ok ? "✅ " : "❌ ") + f + (r.ok ? "：" + Math.round((r.bytes || 0) / 1024) + " KB" : "：" + r.error));
+        } catch (error) { out.push("❌ " + f + "：" + (error && error.message ? error.message : error)); }
+    }
+    return ["📥 从 URL 安装数据库", ""].concat(out).join(String.fromCharCode(10));
+}
+
+function registerDbImport() {
+    registry.provide("runAction:dbImport", async function (a) { return await dbPickAndInstall(); });
+    registry.provide("runAction:dbImportText", async function (a) { const r = await dbImportFromText((a && a.name) || "", (a && a.text) || ""); return r.ok ? "✅ 已安装 " + (a && a.name) : "❌ " + r.error; });
+    registry.provide("runAction:dbImportUrl", async function (a) { return await dbImportFromUrl(a || {}); });
+    registry.provide("runAction:dbTest", async function () { return await dbTestReport(); });
+    registry.provide("runAction:dbUninstall", async function () { const n = await dbUninstall(); return "已卸载手动安装的数据库 " + n + " 项"; });
+    registry.provide("tool:dbtest", async function () { return await dbTestReport(); });
+    log("数据库", "手动安装能力已注册（dbImport / dbImportUrl / dbTest / dbUninstall）");
+}
+
+const dbImport = { DB_FILES, dbKey, dbImportFromText, dbInstalled, dbUninstall, dbTestReport, dbPickAndInstall, dbImportFromUrl, registerDbImport };
+
+return { DB_FILES, dbKey, dbImportFromText, dbInstalled, dbUninstall, dbTestReport, dbPickAndInstall, dbImportFromUrl, registerDbImport, dbImport };
 });
 
 __def("src/data/deck.js", function (__req) {
@@ -6266,6 +6424,10 @@ const FIELDS = [
     { group: "查看", type: "button", key: "viewBoard", label: "⚔️ 决斗盘", action: "viewBoard" },
     { group: "查看", type: "button", key: "viewRecap", label: "📜 本局卡表", action: "viewRecap" },
     { group: "维护", type: "button", key: "clearCache", label: "清空缓存（含持久缓存）", action: "clearCache" },
+    { group: "维护", type: "button", key: "dbImport", label: "📥 安装数据库（手动选文件）", action: "dbImport", hint: "v1 模式：把 卡名索引/卡表/字段表/异画索引 装进 IndexedDB，装了就不依赖 data/ 目录。" },
+    { group: "维护", type: "button", key: "dbImportUrl", label: "🔗 从 URL 安装数据库", action: "dbImportUrl", hint: "给一个目录地址（以 / 结尾）或单个文件地址。" },
+    { group: "维护", type: "button", key: "dbTest", label: "🧪 测试数据库", action: "dbTest", hint: "报告 4 个库各读到多少、来源是手动安装还是随包文件，并真查一张卡。" },
+    { group: "维护", type: "button", key: "dbUninstall", label: "🗑 卸载手动安装的数据库", action: "dbUninstall", hint: "清掉 IndexedDB 里手动装的那份，回到随包 data/。" },
     { group: "维护", type: "button", key: "cacheInfo", label: "查看缓存状态", action: "cacheInfo" },
     { group: "日志", type: "check", key: "logEnabled", label: "启用日志" },
     { group: "日志", type: "check", key: "logToast", label: "注入时弹提示", hint: "每次自动注入都会弹一个小提示，便于确认是否生效。" },
@@ -6906,6 +7068,7 @@ const { ownBase, clearAllCache } = __req("src/core/http.js");
 var indexes = __req("src/data/indexes.js");
 const { registerPacks } = __req("src/data/packs.js");
 const { registerCollection } = __req("src/data/collection.js");
+const { registerDbImport, dbPickAndInstall, dbImportFromUrl, dbTestReport, dbUninstall } = __req("src/data/dbimport.js");
 const { registerDeck } = __req("src/data/deck.js");
 const { registerBoard } = __req("src/data/board.js");
 const { registerArt } = __req("src/data/art.js");
@@ -7012,6 +7175,10 @@ const PANEL_ACTIONS = {
         return "共 " + list.length + " 张 DIY 卡：" + list.map(function (x) { return x.name; }).join("、");
     },
     selftest: async function () { return await registry.call("cmd:selftest", {}); },
+    dbImport: async function () { return await dbPickAndInstall(); },
+    dbImportUrl: async function () { const c = (typeof SillyTavern !== "undefined" && SillyTavern.getContext) ? SillyTavern.getContext() : null; let url = ""; try { if (c && c.callGenericPopup) url = String(await c.callGenericPopup("", 3, "", { okButton: "安装", cancelButton: "取消" }) || ""); } catch (error) { /* 忽略 */ } if (!url) return "（已取消：没填 URL）"; return await dbImportFromUrl({ url: String(url).trim() }); },
+    dbTest: async function () { return await dbTestReport(); },
+    dbUninstall: async function () { return await dbUninstall(); },
     clearCache: async function () { const ok = await clearAllCache(); return ok ? "✅ 缓存已清空（内存 + 持久）" : "内存缓存已清空；当前环境没有 IndexedDB，没有持久缓存可清。"; },
     cacheInfo: async function () {
         const caps = await registry.call("external:capability");
@@ -7077,7 +7244,7 @@ async function boot() {
     report.push(await step("数据层", async function () {
         registerIndexes(); registerCards(); registerCardResolver(); registerRules(); registerSummon(); registerExternal();
         registerPublicApi();
-        registerPacks(); registerCollection(); registerDeck(); registerBoard(); registerArt();
+        registerPacks(); registerCollection(); registerDeck(); registerBoard(); registerArt(); registerDbImport();
     }));
     // ── 注入层
     report.push(await step("注入层", async function () {
@@ -7177,7 +7344,7 @@ if (typeof globalThis !== "undefined" && (globalThis.SillyTavern || (ctx() && ct
 return { MODULE_VERSION, PROBE_KEY, probe, INTERCEPTOR_NAME, PANEL_ACTIONS, REQUIRED_CAPS, boot, ygo2Activate, ensureBoot };
 });
 
-try { globalThis.YgoCardLookupV2Build = {"at":"2026-10-06T10:02:18","hash":"bf2d2a9d","modules":34}; } catch (e) { /* 忽略 */ }
+try { globalThis.YgoCardLookupV2Build = {"at":"2026-10-06T10:24:17","hash":"26ec3299","modules":35}; } catch (e) { /* 忽略 */ }
 var __entry = __req("index.js");
 try { globalThis.YgoCardLookupV2 = __entry; } catch (e) { /* 忽略 */ }
 })();
