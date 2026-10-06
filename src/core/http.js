@@ -39,24 +39,43 @@ export function setOwnBase(url) { baseOverride = url ? String(url) : null; }
 /** 数据文件候选 URL：自身目录优先，其次两个常见目录名（去重） */
 export function dataCandidates(name) {
     const file = String(name || "");
+    // 调用方可能只传文件名（如 "card-stats.tsv"）——自动补上 data/ 这一层；
+    // 这就是"数据文件明明在、却读不到"的根因，必须两种写法都试。
+    const names = [file];
+    if (file.indexOf("data/") !== 0 && file.indexOf("/") < 0) names.push("data/" + file);
     const out = [];
     for (const base of [ownBase(), EXT_PATH, LEGACY_BASE]) {
-        const u = base + file;
-        if (out.indexOf(u) < 0) out.push(u);
+        for (const n of names) {
+            const u = base + n;
+            if (out.indexOf(u) < 0) out.push(u);
+        }
     }
     return out;
 }
+
 export async function dataFile(name, fetchImpl) {
-    const doFetch = fetchImpl || fetch;
-for (const url of dataCandidates(name)) {
+    const doFetch = fetchImpl || ((typeof fetch === "function") ? fetch : null);
+    if (!doFetch) { log("数据", "读取失败：" + name + "（当前环境没有可用的 fetch）"); return ""; }
+    const tried = [];
+    for (const url of dataCandidates(name)) {
         try {
             const response = await doFetch(url);
-            if (response && response.ok) return await response.text();
-        } catch (error) { /* 换下一个位置 */ }
+            if (response && response.ok) {
+                const text = await response.text();
+                if (text && text.length) return text;
+                tried.push(url + "→ 内容为空");
+            } else {
+                tried.push(url + "→ HTTP " + (response ? response.status : "无响应"));
+            }
+        } catch (error) {
+            tried.push(url + "→ " + (error && error.message ? error.message : String(error)));
+        }
     }
-    log("数据", "读取失败：" + name);
+    // 不再静默：把每个候选 URL 与失败原因都写出来（排查"卡库没有"就靠这行）
+    log("数据", "读取失败：" + name + "（已尝试 " + tried.length + " 处：" + tried.join("；") + "）");
     return "";
 }
+
 
 /** 带超时的 JSON 取数。 */
 export async function fetchJson(url, options, timeoutMs, fetchImpl) {

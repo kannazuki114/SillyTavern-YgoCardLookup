@@ -76,6 +76,7 @@ export const FIELDS = [
     { group: "玩法", type: "button", key: "diyList", label: "我的 DIY 卡（图形列表）", action: "diyList" },
     { group: "玩法", type: "select", key: "diyFrameMode", label: "DIY 卡面渲染方式", hint: "css＝自绘卡面（默认，永远可用）；real＝真实卡框 PNG（素材已内置；某张加载失败会自动回退 css）。", options: [["css", "自绘卡面（css）"], ["real", "真实卡框 PNG（real）"]] },
     { group: "玩法", type: "button", key: "diyCheckAssets", label: "检查卡框素材", action: "diyCheckAssets" },
+    { group: "玩法", type: "select", key: "diyFrameMode", label: "DIY 卡框模式", options: ["real", "css"], optionLabels: ["真卡框（素材）", "自绘（简版）"], hint: "real＝用 assets/yugioh 的真卡框；css＝简版自绘" },
     { group: "联动", type: "check", key: "vrmReaction", label: "抽到稀有卡时让 VRM 角色做表情（需装 VRM 扩展）" },
     { group: "联动", type: "check", key: "webSearchFallback", label: "本地查不到时用网络搜索（需装 Web Search 扩展）" },
     { group: "日志", type: "check", key: "logVerbose", label: "详细日志" },

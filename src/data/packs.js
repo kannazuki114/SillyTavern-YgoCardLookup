@@ -3,6 +3,7 @@ import { settings } from "../core/settings.js";
 import { registry } from "../core/registry.js";
 import { fetchJson, cached, lazyIndex } from "../core/http.js";
 import { getStatsIndex, normalizeKey } from "./indexes.js";
+import { addToCollection } from "./collection.js";
 import { findCard } from "./cards.js";
 
 /** ── 统一模板（数据模块）：常量 → 纯函数 → 懒索引 → register → exports ── */
@@ -157,10 +158,12 @@ export async function openPackText(args) {
         const pool = stats.rows.map(function (r) { return r.id; });
         const picked = drawFromPool(poolInPlay(pool.concat(diyPoolEntries().map(function (d) { return d.id; })), stats), packCount(args), rng);
         const cards = await rowsToCards(picked);
+        try { addToCollection(picked); } catch (error) { /* 卡册记录失败不影响抽卡 */ }
         return "🎴 没有指定卡包名，从现有卡库随机抽 " + cards.length + " 张：\n" + cards.map(function (c, i) { return (i + 1) + ". " + c.name; }).join("\n");
     }
     const picked = drawFromPool(pack.cards, packCount(args), rng);
     const cards = await rowsToCards(picked);
+    try { addToCollection(picked); } catch (error) { /* 卡册记录失败不影响抽卡 */ }
     firePackReaction(cards);
     return formatPackDraw(pack, cards);
 }
@@ -224,6 +227,7 @@ export async function drawText(args) {
     const diy = diyPoolEntries();
     for (const d of diy) pool.push(d.id);        // DIY 卡也进抽卡池
     const picked = drawFromPool(poolInPlay(pool, stats), Number(args.count) || 2, rng);
+    try { addToCollection(picked); } catch (error) { /* 卡册记录失败不影响抽卡 */ }
     const diyMap = new Map(diy.map(function (d) { return [d.id, d]; }));
     const rows = [];
     const realIds = picked.filter(function (id) { return !diyMap.has(String(id)); });

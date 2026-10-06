@@ -17,7 +17,7 @@ import { registerRules } from "./src/data/rules.js";
 import { registerSummon } from "./src/data/summon.js";
 import { registerExternal, listProfiles as listExternalProfileList } from "./src/api/external.js";
 import { registerPublicApi, installPublicApi } from "./src/api/public-api.js";
-import { clearAllCache } from "./src/core/http.js";
+import { ownBase, clearAllCache } from "./src/core/http.js";
 import * as indexes from "./src/data/indexes.js";
 import { registerPacks } from "./src/data/packs.js";
 import { registerCollection } from "./src/data/collection.js";

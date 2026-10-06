@@ -78,7 +78,7 @@ export const DEFAULTS = {
     summonAutoApply: true,       // 召唤检查通过时自动落到决斗盘（祭品送墓、怪兽上场、用掉本回合通招）
     isolateCommand: false,      // 隔离：勾上后只有指令（/ygo…）触发，一切自动检测/自然语言触发都不生效
     groupsDisabled: [],         // 栏目隔离：列在这里的栏目整体停用（自动检测注入/提示词/查询内容/外部接口/玩法/联动/日志/查看）
-    diyFrameMode: "css",        // DIY 卡面：css 自绘 / real 真实卡框 PNG（素材在 assets/yugioh/）
+    diyFrameMode: "real",        // DIY 卡面：css 自绘 / real 真实卡框 PNG（素材在 assets/yugioh/）
     diyFrameBase: "",           // 自定义卡框目录（留空＝用自带素材）           // 聊天里卡图最大宽度（像素）
     collection: {},
     collectionTotal: 0,

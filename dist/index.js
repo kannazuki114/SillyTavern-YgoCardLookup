@@ -1,6 +1,6 @@
 /*! 游戏王查卡器 v2 —— 单文件打包产物（经典脚本，无 import/export）。
  *  由 tools/bundle.mjs 生成；请勿直接修改本文件，改 src/ 后重新打包。
- *  模块数：34，import：177 处，export：490 处。
+ *  模块数：34，import：178 处，export：490 处。
  */
 (function () {
 'use strict';
@@ -1833,24 +1833,43 @@ function setOwnBase(url) { baseOverride = url ? String(url) : null; }
 /** 数据文件候选 URL：自身目录优先，其次两个常见目录名（去重） */
 function dataCandidates(name) {
     const file = String(name || "");
+    // 调用方可能只传文件名（如 "card-stats.tsv"）——自动补上 data/ 这一层；
+    // 这就是"数据文件明明在、却读不到"的根因，必须两种写法都试。
+    const names = [file];
+    if (file.indexOf("data/") !== 0 && file.indexOf("/") < 0) names.push("data/" + file);
     const out = [];
     for (const base of [ownBase(), EXT_PATH, LEGACY_BASE]) {
-        const u = base + file;
-        if (out.indexOf(u) < 0) out.push(u);
+        for (const n of names) {
+            const u = base + n;
+            if (out.indexOf(u) < 0) out.push(u);
+        }
     }
     return out;
 }
+
 async function dataFile(name, fetchImpl) {
-    const doFetch = fetchImpl || fetch;
-for (const url of dataCandidates(name)) {
+    const doFetch = fetchImpl || ((typeof fetch === "function") ? fetch : null);
+    if (!doFetch) { log("数据", "读取失败：" + name + "（当前环境没有可用的 fetch）"); return ""; }
+    const tried = [];
+    for (const url of dataCandidates(name)) {
         try {
             const response = await doFetch(url);
-            if (response && response.ok) return await response.text();
-        } catch (error) { /* 换下一个位置 */ }
+            if (response && response.ok) {
+                const text = await response.text();
+                if (text && text.length) return text;
+                tried.push(url + "→ 内容为空");
+            } else {
+                tried.push(url + "→ HTTP " + (response ? response.status : "无响应"));
+            }
+        } catch (error) {
+            tried.push(url + "→ " + (error && error.message ? error.message : String(error)));
+        }
     }
-    log("数据", "读取失败：" + name);
+    // 不再静默：把每个候选 URL 与失败原因都写出来（排查"卡库没有"就靠这行）
+    log("数据", "读取失败：" + name + "（已尝试 " + tried.length + " 处：" + tried.join("；") + "）");
     return "";
 }
+
 
 /** 带超时的 JSON 取数。 */
 async function fetchJson(url, options, timeoutMs, fetchImpl) {
@@ -2117,7 +2136,7 @@ const DEFAULTS = {
     summonAutoApply: true,       // 召唤检查通过时自动落到决斗盘（祭品送墓、怪兽上场、用掉本回合通招）
     isolateCommand: false,      // 隔离：勾上后只有指令（/ygo…）触发，一切自动检测/自然语言触发都不生效
     groupsDisabled: [],         // 栏目隔离：列在这里的栏目整体停用（自动检测注入/提示词/查询内容/外部接口/玩法/联动/日志/查看）
-    diyFrameMode: "css",        // DIY 卡面：css 自绘 / real 真实卡框 PNG（素材在 assets/yugioh/）
+    diyFrameMode: "real",        // DIY 卡面：css 自绘 / real 真实卡框 PNG（素材在 assets/yugioh/）
     diyFrameBase: "",           // 自定义卡框目录（留空＝用自带素材）           // 聊天里卡图最大宽度（像素）
     collection: {},
     collectionTotal: 0,
@@ -3926,6 +3945,7 @@ const { settings } = __req("src/core/settings.js");
 const { registry } = __req("src/core/registry.js");
 const { fetchJson, cached, lazyIndex } = __req("src/core/http.js");
 const { getStatsIndex, normalizeKey } = __req("src/data/indexes.js");
+const { addToCollection } = __req("src/data/collection.js");
 const { findCard } = __req("src/data/cards.js");
 
 /** ── 统一模板（数据模块）：常量 → 纯函数 → 懒索引 → register → exports ── */
@@ -4080,10 +4100,12 @@ async function openPackText(args) {
         const pool = stats.rows.map(function (r) { return r.id; });
         const picked = drawFromPool(poolInPlay(pool.concat(diyPoolEntries().map(function (d) { return d.id; })), stats), packCount(args), rng);
         const cards = await rowsToCards(picked);
+        try { addToCollection(picked); } catch (error) { /* 卡册记录失败不影响抽卡 */ }
         return "🎴 没有指定卡包名，从现有卡库随机抽 " + cards.length + " 张：\n" + cards.map(function (c, i) { return (i + 1) + ". " + c.name; }).join("\n");
     }
     const picked = drawFromPool(pack.cards, packCount(args), rng);
     const cards = await rowsToCards(picked);
+    try { addToCollection(picked); } catch (error) { /* 卡册记录失败不影响抽卡 */ }
     firePackReaction(cards);
     return formatPackDraw(pack, cards);
 }
@@ -4147,6 +4169,7 @@ async function drawText(args) {
     const diy = diyPoolEntries();
     for (const d of diy) pool.push(d.id);        // DIY 卡也进抽卡池
     const picked = drawFromPool(poolInPlay(pool, stats), Number(args.count) || 2, rng);
+    try { addToCollection(picked); } catch (error) { /* 卡册记录失败不影响抽卡 */ }
     const diyMap = new Map(diy.map(function (d) { return [d.id, d]; }));
     const rows = [];
     const realIds = picked.filter(function (id) { return !diyMap.has(String(id)); });
@@ -6232,6 +6255,7 @@ const FIELDS = [
     { group: "玩法", type: "button", key: "diyList", label: "我的 DIY 卡（图形列表）", action: "diyList" },
     { group: "玩法", type: "select", key: "diyFrameMode", label: "DIY 卡面渲染方式", hint: "css＝自绘卡面（默认，永远可用）；real＝真实卡框 PNG（素材已内置；某张加载失败会自动回退 css）。", options: [["css", "自绘卡面（css）"], ["real", "真实卡框 PNG（real）"]] },
     { group: "玩法", type: "button", key: "diyCheckAssets", label: "检查卡框素材", action: "diyCheckAssets" },
+    { group: "玩法", type: "select", key: "diyFrameMode", label: "DIY 卡框模式", options: ["real", "css"], optionLabels: ["真卡框（素材）", "自绘（简版）"], hint: "real＝用 assets/yugioh 的真卡框；css＝简版自绘" },
     { group: "联动", type: "check", key: "vrmReaction", label: "抽到稀有卡时让 VRM 角色做表情（需装 VRM 扩展）" },
     { group: "联动", type: "check", key: "webSearchFallback", label: "本地查不到时用网络搜索（需装 Web Search 扩展）" },
     { group: "日志", type: "check", key: "logVerbose", label: "详细日志" },
@@ -6878,7 +6902,7 @@ const { registerRules } = __req("src/data/rules.js");
 const { registerSummon } = __req("src/data/summon.js");
 const { registerExternal, listProfiles: listExternalProfileList } = __req("src/api/external.js");
 const { registerPublicApi, installPublicApi } = __req("src/api/public-api.js");
-const { clearAllCache } = __req("src/core/http.js");
+const { ownBase, clearAllCache } = __req("src/core/http.js");
 var indexes = __req("src/data/indexes.js");
 const { registerPacks } = __req("src/data/packs.js");
 const { registerCollection } = __req("src/data/collection.js");
@@ -7153,7 +7177,7 @@ if (typeof globalThis !== "undefined" && (globalThis.SillyTavern || (ctx() && ct
 return { MODULE_VERSION, PROBE_KEY, probe, INTERCEPTOR_NAME, PANEL_ACTIONS, REQUIRED_CAPS, boot, ygo2Activate, ensureBoot };
 });
 
-try { globalThis.YgoCardLookupV2Build = {"at":"2026-10-06T09:19:12","hash":"759a5f35","modules":34}; } catch (e) { /* 忽略 */ }
+try { globalThis.YgoCardLookupV2Build = {"at":"2026-10-06T10:02:18","hash":"bf2d2a9d","modules":34}; } catch (e) { /* 忽略 */ }
 var __entry = __req("index.js");
 try { globalThis.YgoCardLookupV2 = __entry; } catch (e) { /* 忽略 */ }
 })();
