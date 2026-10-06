@@ -1,0 +1,196 @@
+/*
+ * 查卡器 v2 样式：所有选择器都以 .ygo2- / #ygo2_ 开头，只作用于本插件。
+ * 设计原则（与 v1 一致）：
+ *   1) 控件不要原生白底 —— 一律半透明 + 细边框 + color:inherit，跟随宿主主题；
+ *   2) 优先用宿主主题变量（--SmartTheme*），取不到时用一套暗色兜底；
+ *   3) 面板容器本身透明，不额外铺一层背景。
+ */
+
+.ygo2-panel, .ygo2-prompt-editor, .ygo2-result {
+    --ygo2-fg: var(--SmartThemeBodyColor, #e6e6e6);
+    --ygo2-dim: var(--SmartThemeEmColor, rgba(230, 230, 230, .62));
+    --ygo2-line: var(--SmartThemeBorderColor, rgba(255, 255, 255, .16));
+    --ygo2-fill: rgba(255, 255, 255, .06);
+    --ygo2-fill-hover: rgba(255, 255, 255, .10);
+    --ygo2-fill-focus: rgba(255, 255, 255, .13);
+    --ygo2-accent: var(--SmartThemeQuoteColor, rgba(120, 180, 255, .85));
+    color: var(--ygo2-fg);
+}
+
+/* 面板容器：透明，不铺白底 */
+.ygo2-panel { background: transparent; }
+.ygo2-panel .inline-drawer-content { background: transparent; }
+
+/* 分组折叠 */
+.ygo2-fold {
+    border: 1px solid var(--ygo2-line);
+    border-radius: 8px;
+    margin: 6px 0;
+    padding: 0 10px;
+    background: rgba(255, 255, 255, .025);
+}
+.ygo2-fold > summary {
+    cursor: pointer;
+    padding: 7px 2px;
+    font-weight: 600;
+    letter-spacing: .3px;
+    list-style: revert;
+}
+.ygo2-fold[open] > summary { border-bottom: 1px solid var(--ygo2-line); margin-bottom: 8px; }
+.ygo2-fold-body { padding-bottom: 8px; }
+
+/* 字段 */
+.ygo2-field { margin: 6px 0 9px; }
+.ygo2-field > .ygo2-label {
+    display: block;
+    margin: 0 0 3px;
+    font-size: 12px;
+    color: var(--ygo2-dim);
+    letter-spacing: .2px;
+}
+
+/* 字段说明与提示条 */
+.ygo2-hint { margin: 3px 0 0; font-size: 11px; line-height: 1.45; color: var(--ygo2-dim); opacity: .9; }
+.ygo2-note { margin: 6px 0 10px; padding: 7px 10px; font-size: 12px; line-height: 1.5;
+    border: 1px dashed var(--ygo2-line); border-radius: 7px;
+    background: rgba(255, 200, 120, .06); color: var(--ygo2-fg); }
+
+/* 全部控件：半透明、跟随主题，杜绝原生白框 */
+.ygo2-panel input:not([type="checkbox"]),
+.ygo2-panel select,
+.ygo2-panel textarea,
+.ygo2-prompt-editor input:not([type="checkbox"]),
+.ygo2-prompt-editor select,
+.ygo2-prompt-editor textarea {
+    width: 100%;
+    box-sizing: border-box;
+    background: var(--ygo2-fill) !important;
+    border: 1px solid var(--ygo2-line);
+    border-radius: 6px;
+    color: inherit !important;
+    padding: 4px 8px;
+    font-size: 13px;
+    line-height: 1.45;
+    transition: background .15s, border-color .15s;
+}
+.ygo2-panel input:not([type="checkbox"]):hover,
+.ygo2-panel select:hover,
+.ygo2-panel textarea:hover,
+.ygo2-prompt-editor input:hover,
+.ygo2-prompt-editor select:hover,
+.ygo2-prompt-editor textarea:hover { background: var(--ygo2-fill-hover) !important; }
+.ygo2-panel input:not([type="checkbox"]):focus,
+.ygo2-panel select:focus,
+.ygo2-panel textarea:focus,
+.ygo2-prompt-editor input:focus,
+.ygo2-prompt-editor select:focus,
+.ygo2-prompt-editor textarea:focus {
+    outline: none;
+    border-color: var(--ygo2-accent);
+    background: var(--ygo2-fill-focus) !important;
+}
+.ygo2-panel textarea, .ygo2-prompt-editor textarea { resize: vertical; min-height: 54px; }
+.ygo2-panel select option, .ygo2-prompt-editor select option { background: #1e1e22; color: #eaeaea; }
+
+/* 复选框：沿用酒馆的 checkbox_label 结构，只做间距微调 */
+.ygo2-panel .ygo2-check { display: flex; align-items: center; gap: 6px; margin: 5px 0; }
+.ygo2-panel .ygo2-check > input[type="checkbox"] { flex: 0 0 auto; margin: 0; }
+.ygo2-panel .ygo2-check > span { font-size: 13px; line-height: 1.35; }
+
+/* 按钮 */
+.ygo2-panel .ygo2-button, .ygo2-prompt-editor .menu_button { margin: 4px 0; }
+
+/* 提示词编辑器 */
+.ygo2-prompt-editor .ygo2-pe-hint { font-size: 12px; color: var(--ygo2-dim); margin: 0 0 8px; }
+.ygo2-prompt-editor .ygo2-pe-bar { display: flex; gap: 8px; margin: 0 0 10px; }
+.ygo2-prompt-editor .ygo2-pe-state { display: block; margin: 2px 0 10px; font-size: 11px; color: var(--ygo2-dim); }
+.ygo2-prompt-editor .ygo2-pe-preview {
+    max-height: 220px; overflow: auto; padding: 8px; border-radius: 6px;
+    background: rgba(0, 0, 0, .28); border: 1px solid var(--ygo2-line);
+    font-family: ui-monospace, Consolas, monospace; font-size: 11px; line-height: 1.5; white-space: pre-wrap;
+}
+
+/* 结果弹窗 */
+.ygo2-result { background: transparent; }
+.ygo2-result-title { font-weight: 600; margin: 0 0 8px; }
+.ygo2-result-body { font-size: 13px; line-height: 1.6; word-break: break-word; }
+
+/* 日志 */
+.ygo2-log {
+    max-height: 200px; overflow: auto; margin-top: 6px; padding: 6px 8px;
+    border-radius: 6px; border: 1px solid var(--ygo2-line);
+    background: rgba(0, 0, 0, .25);
+    font-family: ui-monospace, Consolas, "Courier New", monospace;
+    font-size: 11px; line-height: 1.5; white-space: pre-wrap; word-break: break-all;
+}
+
+/* 连接块（外部接口） */
+.ygo2-conn { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 10px; padding: 9px 11px; border: 1px solid var(--ygo2-line); border-radius: 9px; background: rgba(255, 255, 255, .035); }
+.ygo2-conn-row { display: flex; align-items: center; gap: 9px; }
+.ygo2-conn-row > span { flex: 0 0 60px; font-size: 12px; color: var(--ygo2-dim); }
+.ygo2-conn-row > input, .ygo2-conn-row > select { flex: 1 1 auto; min-width: 0; width: auto; }
+.ygo2-conn-status { font-size: 12px; color: var(--ygo2-dim); padding-left: 69px; }
+.ygo2-conn-status.ok { color: #5fd38a; }
+.ygo2-conn-status.err { color: #e06c75; }
+
+/* DIY 卡与卡图（与 v1 保持一致） */
+.ygo2-diy-card { position: relative; }
+.ygo2-diy-editor * { box-sizing: border-box; }
+.mes_text img.ygo2-card-img { max-width: min(100%, 360px); height: auto; border-radius: 6px; }
+
+/* DIY 图形编辑器与卡列表 */
+.ygo2-diy-editor-box { background: transparent; }
+.ygo2-diy-editor { display: flex; gap: 14px; align-items: flex-start; }
+.ygo2-diy-form { flex: 1 1 auto; min-width: 0; }
+.ygo2-diy-side { flex: 0 0 240px; text-align: center; }
+.ygo2-diy-row { display: flex; gap: 8px; }
+.ygo2-diy-row > div { flex: 1 1 0; min-width: 0; }
+.ygo2-diy-actions { display: flex; gap: 8px; justify-content: center; margin-top: 10px; }
+.ygo2-diy-actions .menu_button { margin: 0; }
+.ygo2-diy-list { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+.ygo2-diy-list-item { text-align: center; }
+.ygo2-diy-list-name { font-size: 12px; color: var(--ygo2-dim); margin-top: 4px; }
+.ygo2-diy-card .ygo2-diy-arrow {
+    position: absolute; font-size: 9px; color: #1b1b1b; background: rgba(255,255,255,.75);
+    border: 1px solid rgba(0,0,0,.3); border-radius: 3px; padding: 0 2px; line-height: 1.3;
+}
+.ygo2-diy-card .ygo2-diy-arrow[data-arrow="左上"] { top: 0; left: 0; }
+.ygo2-diy-card .ygo2-diy-arrow[data-arrow="上"] { top: 0; left: 50%; transform: translateX(-50%); }
+.ygo2-diy-card .ygo2-diy-arrow[data-arrow="右上"] { top: 0; right: 0; }
+.ygo2-diy-card .ygo2-diy-arrow[data-arrow="左"] { top: 50%; left: 0; transform: translateY(-50%); }
+.ygo2-diy-card .ygo2-diy-arrow[data-arrow="右"] { top: 50%; right: 0; transform: translateY(-50%); }
+.ygo2-diy-card .ygo2-diy-arrow[data-arrow="左下"] { bottom: 0; left: 0; }
+.ygo2-diy-card .ygo2-diy-arrow[data-arrow="下"] { bottom: 0; left: 50%; transform: translateX(-50%); }
+.ygo2-diy-card .ygo2-diy-arrow[data-arrow="右下"] { bottom: 0; right: 0; }
+
+/* 图形面板：卡格 / 收藏册 / 商店 / 决斗盘 / 单卡视图 */
+.ygo2-view { color: var(--ygo2-fg); }
+.ygo2-view-head { font-weight: 600; margin-bottom: 4px; }
+.ygo2-view-head small { display: block; font-weight: 400; font-size: 11px; color: var(--ygo2-dim); margin-top: 2px; }
+.ygo2-empty { font-size: 12px; color: var(--ygo2-dim); padding: 10px 0; }
+.ygo2-progress { height: 6px; border-radius: 4px; background: rgba(255,255,255,.10); overflow: hidden; margin: 8px 0 12px; }
+.ygo2-progress > i { display: block; height: 100%; background: linear-gradient(90deg, #7ab4ff, #9fd0ff); }
+.ygo2-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; }
+.ygo2-cell { margin: 0; background: rgba(255,255,255,.04); border: 1px solid var(--ygo2-line); border-radius: 8px; padding: 4px; position: relative; }
+.ygo2-cell img { width: 100%; display: block; border-radius: 5px; }
+.ygo2-cell-ph { width: 100%; aspect-ratio: 59/86; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.25); border-radius: 5px; color: var(--ygo2-dim); }
+.ygo2-cell figcaption { font-size: 11px; line-height: 1.25; margin-top: 4px; color: var(--ygo2-fg); word-break: break-all; }
+.ygo2-cell-note { position: absolute; right: 5px; top: 5px; font-size: 10px; background: rgba(0,0,0,.55); color: #eaeaea; border-radius: 4px; padding: 1px 4px; }
+.ygo2-cell.dim { opacity: .4; }
+.ygo2-board { display: flex; flex-direction: column; gap: 10px; }
+.ygo2-side { border: 1px solid var(--ygo2-line); border-radius: 10px; padding: 8px 10px; background: rgba(255,255,255,.03); }
+.ygo2-side.opp { border-color: rgba(224,108,117,.45); }
+.ygo2-side.me { border-color: rgba(120,180,255,.45); }
+.ygo2-side-head { display: flex; justify-content: space-between; align-items: baseline; font-weight: 600; margin-bottom: 6px; }
+.ygo2-zone { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; margin: 4px 0; font-size: 11px; }
+.ygo2-zone b { flex: 0 0 62px; color: var(--ygo2-dim); font-weight: 500; }
+.ygo2-chip { background: rgba(255,255,255,.10); border: 1px solid var(--ygo2-line); border-radius: 5px; padding: 1px 6px; }
+.ygo2-chip-empty { color: var(--ygo2-dim); }
+.ygo2-board-log { font-size: 11px; color: var(--ygo2-dim); margin-top: 6px; }
+.ygo2-card-view { display: flex; gap: 14px; align-items: flex-start; }
+.ygo2-card-figure { flex: 0 0 220px; text-align: center; }
+.ygo2-card-figure img { width: 100%; border-radius: 8px; }
+.ygo2-card-name { margin-top: 6px; font-weight: 600; }
+.ygo2-card-table { flex: 1 1 auto; border-collapse: collapse; font-size: 12px; }
+.ygo2-card-table th { text-align: left; color: var(--ygo2-dim); font-weight: 500; padding: 3px 10px 3px 0; white-space: nowrap; vertical-align: top; }
+.ygo2-card-table td { padding: 3px 0; word-break: break-word; }

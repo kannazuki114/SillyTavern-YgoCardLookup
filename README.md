@@ -1,2 +1,46 @@
-# SillyTavern-YgoCardLookup
-SillyTavern extension: auto-detects Yu-Gi-Oh card names in chat and injects card data (CN/JP/EN names, effect text, card image, archetype, release year, banlist) from ygocdb into the prompt.
+# 游戏王查卡器 v2（统一模板重写版）
+
+旧版 `ygo-card-lookup` 保持不动，本目录是重写版，用于对照与逐步替换。
+
+## 统一模板约定
+- `index.js` 只做装配；业务在 `src/` 下按层分目录
+- `src/core`：设置、事件、取数、缓存、日志
+- `src/data`：索引、查卡、卡包、规则
+- `src/inject`：识别与注入构造
+- `src/ui`：设置面板（HTML 外置）、结果面板、提示词窗口、DIY
+- `src/api`：外部接口、function tools、斜杠命令
+- `test/smoke.mjs`：部署前自检（语法 / 顶层重复 / 面板分组 / 运行时冒烟）
+
+## 数据来源
+索引与素材复用旧目录（`../ygo-card-lookup/`），不重复拷贝：
+- `card-names.txt` / `card-stats.tsv` / `setnames.json`
+- `assets/yugioh/*.png`（真实卡框）
+
+## ⚠️ 与 v1（ygo-card-lookup）共存时的注意点
+
+v1（`ygo-card-lookup`，v3.75.0）与 v2（本扩展）**互不干扰**：目录独立、注入 id 独立、设置键独立。
+但两者都会做「自动检测注入」，同时启用会出现**同一张卡的资料注入两遍**（浪费上下文）。
+
+**测 v2 时建议**：在扩展列表里先取消勾选 v1（或把 v1 的「启用自动检测注入」关掉），只留 v2。
+确认 v2 没问题后，再把 v1 长期关闭（保留目录不删，随时可回退）。
+
+## 真机验收清单（F5 后逐项核对）
+
+| 项目 | 预期 |
+| --- | --- |
+| 扩展列表 | 出现「游戏王查卡器 v2」，勾选后日志显示「装配完成：能力 43 项」 |
+| 设置面板 | 出现 7 个折叠分组、共 39 个控件（自动检测注入/提示词/查询内容/外部接口/玩法/联动/日志） |
+| `/ygoselftest` | 31 项全部 ✅（首行显示「31/31 通过」） |
+| `/ygocard 青眼白龙` | 返回卡资料文本（含密码 89631139、ATK/DEF 3000/2500、卡图链接） |
+| 直接说「青眼白龙」 | 生成时提示词里带卡资料（同时带「模块速查表」和「是否采用由你判断」提示） |
+| `/ygopack 超级包06` | 按真实卡包首发卡池抽卡（显示卡池张数） |
+| `/ygoart 黑魔导` | 9 个版本图（离线索引，不发网络请求） |
+| `/ygoshop` | 当日 5 件（同一天同一聊天刷新结果不变） |
+| `/ygodeckimage 3 青眼白龙` | 返回摘要（真机上应在新标签页打开卡组图页） |
+| `/ygoprompt` | 打开提示词编辑窗口，改动即刻保存 |
+| 摘要/翻译等 quiet 生成 | 不注入（日志显示「quiet 生成，跳过注入」） |
+
+### 出问题时把这三样发我
+1. 浏览器控制台（F12）里 `[YGO2]` 开头的报错；
+2. 面板「日志」按钮里的最近记录；
+3. `/ygoselftest` 的输出（哪几项 ❌、详情写了什么）。

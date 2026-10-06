@@ -1,0 +1,14 @@
+{
+    "display_name": "游戏王查卡器 v2",
+    "loading_order": 100,
+    "js": "dist/index.js",
+    "css": "style.css",
+    "author": "local",
+    "version": "0.2.0",
+    "homePage": "",
+    "auto_update": false,
+    "generate_interceptor": "YgoCardLookupV2_Intercept",
+    "minimum_client_version": "1.12.0",
+    "description": "统一模板重写版：多文件模块化、设置面板 HTML 外置、带自检脚本",
+    "dependencies": []
+}
