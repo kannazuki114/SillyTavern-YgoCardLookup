@@ -115,6 +115,16 @@
 .ygo2-result-title { font-weight: 600; margin: 0 0 8px; }
 .ygo2-result-body { font-size: 13px; line-height: 1.6; word-break: break-word; }
 
+/* 面板按钮的结果（buildFeedbackHtml → <pre class="ygo2-feedback">）—— 以前没有任何规则，
+   长结果既不能滚动也没有主题配色 */
+.ygo2-feedback {
+    max-height: 52vh; overflow: auto; margin: 8px 0 0; padding: 10px 12px;
+    border-radius: 6px; border: 1px solid var(--ygo2-line);
+    background: rgba(0, 0, 0, .25);
+    font-family: ui-monospace, Consolas, "Courier New", monospace;
+    font-size: 12px; line-height: 1.55; white-space: pre-wrap; word-break: break-word;
+}
+
 /* 日志 */
 .ygo2-log {
     max-height: 200px; overflow: auto; margin-top: 6px; padding: 6px 8px;

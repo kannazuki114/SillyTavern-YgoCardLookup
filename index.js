@@ -17,26 +17,26 @@ import { registerRules } from "./src/data/rules.js";
 import { registerSummon } from "./src/data/summon.js";
 import { registerExternal, listProfiles as listExternalProfileList } from "./src/api/external.js";
 import { registerPublicApi, installPublicApi } from "./src/api/public-api.js";
-import { ownBase, clearAllCache } from "./src/core/http.js";
+import { ownBase, captureSelfBase, clearAllCache } from "./src/core/http.js";
 import * as indexes from "./src/data/indexes.js";
 import { registerPacks } from "./src/data/packs.js";
 import { registerCollection } from "./src/data/collection.js";
-import { registerDbImport, dbPickAndInstall, dbImportFromUrl, dbTestReport, dbUninstall } from "./src/data/dbimport.js";
 import { registerDeck } from "./src/data/deck.js";
 import { registerBoard } from "./src/data/board.js";
 import { registerArt } from "./src/data/art.js";
 
 import { registerWriter, clearInjection } from "./src/inject/writer.js";
+import { registerSendBox } from "./src/ui/sendbox.js";
 import { registerCleanup, cleanLastMessage } from "./src/inject/cleanup.js";
 import { registerSendBody } from "./src/inject/sendbody.js";
-import { createInterceptor } from "./src/inject/interceptor.js";
+import { createInterceptor, registerInterceptorHooks } from "./src/inject/interceptor.js";
 
-import { mountPanel } from "./src/ui/panel.js";
+import { mountPanel, registerStrictnessAction, registryProblems } from "./src/ui/panel.js";
 import { configure as configurePanel, refreshDynamicSelects } from "./src/ui/panel.js";
 import { registerResult } from "./src/ui/result.js";
 import { registerPromptEditor } from "./src/ui/prompt.js";
 import { registerDiyUi, openDiyEditor, diyCardHtml, installFrameFallback } from "./src/ui/diy.js";
-import { registerGameUi, openCollection, openShop, openBoard, openRecap, openCard, openCardInput } from "./src/ui/game.js";
+import { registerGameUi, openCollection, openShop, openBoard, openRecap, openCard, openCardInput, installBuyDelegate } from "./src/ui/game.js";
 
 import { registerTools } from "./src/api/tools.js";
 import { registerCommands } from "./src/api/commands.js";
@@ -45,6 +45,10 @@ import { registerSelfTest } from "./src/api/selftest.js";
 import { registerDeckImage } from "./src/api/deckimage.js";
 
 export const MODULE_VERSION = "0.2.0";
+
+// ★ 必须在"脚本求值这一刻"记录自身目录：之后 document.currentScript 就变回 null 了。
+//   这样无论仓库/文件夹叫什么名字，data/ 与 assets/ 都能定位到（GitHub 安装时目录名 = 仓库名）。
+captureSelfBase();
 
 /**
  * 磁盘探针（诊断用）：把关键阶段写进 extensionSettings 的一个独立键，
@@ -128,11 +132,12 @@ export const PANEL_ACTIONS = {
         return "共 " + list.length + " 张 DIY 卡：" + list.map(function (x) { return x.name; }).join("、");
     },
     selftest: async function () { return await registry.call("cmd:selftest", {}); },
-    dbImport: async function () { return await dbPickAndInstall(); },
-    dbImportUrl: async function () { const c = (typeof SillyTavern !== "undefined" && SillyTavern.getContext) ? SillyTavern.getContext() : null; let url = ""; try { if (c && c.callGenericPopup) url = String(await c.callGenericPopup("", 3, "", { okButton: "安装", cancelButton: "取消" }) || ""); } catch (error) { /* 忽略 */ } if (!url) return "（已取消：没填 URL）"; return await dbImportFromUrl({ url: String(url).trim() }); },
-    dbTest: async function () { return await dbTestReport(); },
-    dbUninstall: async function () { return await dbUninstall(); },
-    clearCache: async function () { const ok = await clearAllCache(); return ok ? "✅ 缓存已清空（内存 + 持久）" : "内存缓存已清空；当前环境没有 IndexedDB，没有持久缓存可清。"; },
+    clearCache: async function () {
+        const ok = await clearAllCache();
+        // 索引也要一起重建，否则"清完缓存还是旧的"（懒索引只在进程内缓存）
+        try { if (registry.has("index:reset")) await registry.call("index:reset"); } catch (error) { /* 忽略 */ }
+        return ok ? "✅ 缓存已清空（内存 + 持久；手动安装的数据库保留）" : "内存缓存已清空；当前环境没有 IndexedDB，没有持久缓存可清。";
+    },
     cacheInfo: async function () {
         const caps = await registry.call("external:capability");
         const hasIdb = (function () { try { return typeof indexedDB !== "undefined" && !!indexedDB; } catch (error) { return false; } })();
@@ -177,7 +182,8 @@ async function step(name, fn) {
 export const REQUIRED_CAPS = [
     "tool:card", "tool:pack", "tool:board", "ui:result", "ui:prompt", "writeInjection",
     "resolveCards", "runAction", "index:limits", "checkSummon", "external:ask", "external:test",
-    "external:models", "ui:diy", "ui:sendbox", "sendbody:on", "sendbody:handle", "boardText", "cleanupLastMessage",
+    "external:models", "ui:diy", "ui:sendbox", "ui:buy", "sendbody:on", "sendbody:handle", "boardText", "cleanupLastMessage",
+    "injectFallback:run", "strictness:get", "tool:deckimage", "collection:state", "decodeSetcodes",
 ];
 
 async function boot() {
@@ -197,35 +203,55 @@ async function boot() {
     report.push(await step("数据层", async function () {
         registerIndexes(); registerCards(); registerCardResolver(); registerRules(); registerSummon(); registerExternal();
         registerPublicApi();
-        registerPacks(); registerCollection(); registerDeck(); registerBoard(); registerArt(); registerDbImport();
+        registerPacks(); registerCollection(); registerDeck(); registerBoard(); registerArt();
     }));
     // ── 注入层
     report.push(await step("注入层", async function () {
         registerWriter();
         registerCleanup();
         registerSendBody();
+        registerInterceptorHooks();   // ★ 注册 injectFallback:run：宿主不调 generate_interceptor 时靠它兜底
         const interceptor = createInterceptor();
         interceptor.clearInjection = clearInjection;
         globalThis[INTERCEPTOR_NAME] = interceptor;
     }));
     // ── 界面层（无 DOM 时应优雅跳过，不抛错）
     report.push(await step("界面层", async function () {
-        registerResult(); registerPromptEditor(); registerDiyUi(); registerGameUi();
-        try { panel.registerStrictnessAction(); } catch (error) { /* 面板模块没加载就算了 */ }
+        registerResult(); registerPromptEditor(); registerDiyUi(); registerGameUi(); registerSendBox();
+        installBuyDelegate();   // ★ 商店「购买」按钮的点击委派（不装就点了没反应）
+        try { registerStrictnessAction(); } catch (error) { log("启动", "严格程度动作注册失败：" + (error && error.message ? error.message : error)); }
         installFrameFallback();
         try { configurePanel({ listExternalProfiles: function () { return listExternalProfileList(); }, getApiModels: function () { return settings.get("apiModels") || []; } }); } catch (error) { /* 面板可选 */ }
         applyIsolation();
         on("settings", function () { applyIsolation(); });
-        return await mountPanel(PANEL_ACTIONS);
+        // 面板字段注册表自检（重复 key / 非法类型 / 缺 options 都能在这里暴露）
+        try {
+            const problems = registryProblems();
+            if (problems.length) log("面板", "⚠️ 字段注册表有问题 " + problems.length + " 条：" + problems.slice(0, 6).join("；"));
+        } catch (error) { log("面板", "字段注册表自检失败：" + (error && error.message ? error.message : error)); }
+        // ★ 不再 await：宿主设置抽屉晚出现时，等待最坏要 10 秒，会把接口层/事件层一起拖住
+        panelMount = mountPanel(PANEL_ACTIONS).then(function (mounted) {
+            log("面板", mounted ? "挂载完成" : "暂未找到设置抽屉宿主，稍后打开设置时会自动重试");
+            return mounted;
+        }).catch(function (error) {
+            log("面板", "挂载异常（不影响命令与工具）：" + (error && error.message ? error.message : error));
+            return false;
+        });
+        return true;
     }));
     // ── 接口层
     report.push(await step("接口层", async function () {
-        registerTools(); registerCommands(); registerIntegrations(); registerSelfTest(); registerDeckImage();
+        registerTools(); registerCommands(); registerIntegrations(); registerDeckImage();
+        registerSelfTest({ requiredCaps: function () { return REQUIRED_CAPS.filter(function (cap) { return !registry.has(cap); }); } });
     }));
     // ── 事件层
     report.push(await step("事件层", async function () {
         return mountEvents({
-            onReady: function () { log("启动", "APP_READY"); },
+            onReady: function () {
+                log("启动", "APP_READY");
+                // 再挂一次（幂等）：有些宿主会在页面初始化更晚的时候重建 globalThis 上的对象
+                try { installPublicApi(); } catch (error) { log("启动", "对外接口补挂失败：" + (error && error.message ? error.message : error)); }
+            },
             onChatChanged: function () { clearInjection(); log("启动", "切换聊天：已清空注入"); },
             // ★ 兜底通道（v1 同款）：桌面客户端既不调 generate_interceptor、也不触发 PROMPT_READY，
             //   只有 GENERATION_AFTER_COMMANDS 在"提示词组装前"触发 —— 资料在这里追加才真的进本次发送。
@@ -248,7 +274,7 @@ async function boot() {
                     }
                 } catch (error) { log("兜底", "兜底通道异常（不影响生成）：" + (error && error.message ? error.message : error)); }
             },
-            onMessageReceived: function () { try { cleanLastMessage(); } catch (error) { /* 清理失败不影响消息 */ } },
+            onMessageReceived: function (id) { try { cleanLastMessage(id); } catch (error) { /* 清理失败不影响消息 */ } },
             // 兜底注入：宿主没调拦截器（例如不支持 generate_interceptor）时，玩家消息入楼后补一次
             onMessageSentFallback: async function () {
                 try {
@@ -260,16 +286,26 @@ async function boot() {
             },
         });
     }));
+    // ── 对外接口：必须等"同步装配"全部结束之后再挂。
+    //    打包产物在入口模块返回之后才执行 globalThis.YgoCardLookupV2 = __entry，
+    //    而数据层那一段是纯同步的 —— 在那里装的话会被这一行整个覆盖掉（实测踩过）。
+    report.push(await step("对外接口", async function () { installPublicApi(); return true; }));
     const failed = report.filter(function (r) { return !r.ok; });
-    log("启动", "装配完成：能力 " + registry.list().length + " 项" + (failed.length ? "，失败层：" + failed.map(function (r) { return r.name; }).join("、") : "，全部成功"));probe("booted", {
+    // ★ REQUIRED_CAPS 校验（以前只声明不校验，能力缺失永远看不出来）
+    for (const cap of REQUIRED_CAPS) { if (!registry.has(cap)) missingCaps.push(cap); }
+    log("启动", "装配完成：能力 " + registry.list().length + " 项" + (failed.length ? "，失败层：" + failed.map(function (r) { return r.name; }).join("、") : "，全部成功"));
+    if (missingCaps.length) log("启动", "⚠️ 缺少必需能力 " + missingCaps.length + " 项：" + missingCaps.join("、"));
+    probe("booted", {
         ok: failed.length === 0,
         capabilities: registry.list().length,
         layers: report.map(function (r) { return r.name + ":" + (r.ok ? "ok" : "fail"); }),
+        missingCaps: missingCaps,
         interceptor: typeof globalThis[INTERCEPTOR_NAME] === "function",
         domHost: (function () { try { return !!(document.getElementById("extensions_settings2") || document.getElementById("extensions_settings")); } catch (e) { return false; } })(),
         panelMounted: (function () { try { return !!document.getElementById("ygo2_settings"); } catch (e) { return false; } })(),
+        base: (function () { try { return ownBase(); } catch (e) { return "?"; } })(),
     });
-    return { ok: failed.length === 0, report: report, capabilities: registry.list().length, interceptor: typeof globalThis[INTERCEPTOR_NAME] === "function" };
+    return { ok: failed.length === 0 && missingCaps.length === 0, report: report, capabilities: registry.list().length, missingCaps: missingCaps, interceptor: typeof globalThis[INTERCEPTOR_NAME] === "function" };
 }
 
 export { boot };
@@ -279,6 +315,9 @@ export { boot };
  * 两套入口共用同一个单次启动守卫，避免重复装配（tt 若两者都触发，第二次会直接返回上次结果）。
  */
 let bootPromise = null;
+/** 面板挂载是异步的（不阻塞启动）；这里留个句柄供诊断/测试 await */
+let panelMount = null;
+export function whenPanelMounted() { return panelMount || Promise.resolve(false); }
 export function ygo2Activate() { return ensureBoot(); }
 export function ensureBoot() {
     if (!bootPromise) bootPromise = boot().catch(function (error) { console.error("[YGO2] 启动失败", error); bootPromise = null; throw error; });

@@ -20,6 +20,11 @@ function doFetch(url, ms) { return fetchImpl ? fetchImpl(url, ms) : fetchJson(ur
 
 /** 2) 纯函数 */
 /** 解析禁限表：键是 CID（不是 8 位密码），这一条已用线上数据核对过 */
+/** 接口取不到时的空表（形状与 parseLimits 一致）——让调用方走"未取到"分支，而不是让整个能力抛异常 */
+export function emptyLimits() {
+    const one = function () { return { date: "", forbidden: new Set(), limited: new Set(), semi: new Set(), names: { forbidden: {}, limited: {}, semi: {} } }; };
+    return { cn: one(), ja: one(), en: one() };
+}
 export function parseLimits(json) {
     const data = typeof json === "string" ? JSON.parse(json) : (json || {});
     const out = {};
@@ -288,14 +293,22 @@ export async function crossRulingText(args) {
 }
 
 /** 3) 懒索引 */
-export const getLimits = lazyIndex(async function () { return parseLimits(await doFetch(LIMITS_URL, 20000)); });
+export const getLimits = lazyIndex(async function () {
+    // 以前这里直接 await doFetch：断网/接口挂了就抛出去，/ygodeck 与禁限查询整个报错。
+    // 现在退化成空表（"未能获取禁限卡表"），其它本地判定照常。
+    try { return parseLimits(await doFetch(LIMITS_URL, 20000)); }
+    catch (error) {
+        log("数据", "禁限表取不到（" + (error && error.message ? error.message : error) + "）：禁限相关判定暂时不可用");
+        return emptyLimits();
+    }
+});
 
 /** 4) 注册能力 */
 /** 触发词派发（与 packs.runAction 合并注册；同一个 key 后注册者覆盖前者，因此集中在这里做总派发） */
 export async function runAction(trigger) {
     const action = trigger && trigger.action;
     const arg = (trigger && trigger.arg) || "";
-    if (action === "banlist") return [{ name: arg ? "禁限状态" : "禁限卡表", text: await banlistText("cn", arg) }];
+    if (action === "banlist") return [{ name: arg ? "禁限状态" : "禁限卡表", text: await banlistText(settings.get("banlistRegion") || "cn", arg) }];
     if (action === "rule") {
         if (!arg) return [];
         const text = await rulingText({ query: arg, limit: 3 });

@@ -27,7 +27,7 @@ export function eventTypes() {
  * MESSAGE_SENT     → 记录玩家消息（供"本局卡表"用）
  * GENERATION_ENDED → 取回非阻塞的外部结果（下一轮生效）
  */
-export function mountEvents(hooks) {
+export async function mountEvents(hooks) {
     const src = eventSource();
     const types = eventTypes();
     if (!src || typeof src.on !== "function") { log("事件", "当前客户端没有 eventSource，跳过挂载"); return 0; }
@@ -53,7 +53,7 @@ export function mountEvents(hooks) {
     // 发送体改写钩子（官方 CHAT_COMPLETION_PROMPT_READY）：注册表里有人装才挂，失败不影响其它事件
     try {
         if (registry.has("sendbody:on")) {
-            const ok = registry.call("sendbody:on", src, types);
+            const ok = await registry.call("sendbody:on", src, types);   // 漏了 await：以前恒报"已挂载"，失败还会变成未处理的 Promise 拒绝
             log("事件", ok ? "发送体钩子已挂载：" + EXTRA_EVENTS.join(",") : "发送体钩子未挂上（宿主事件不可用）");
         }
     } catch (error) {

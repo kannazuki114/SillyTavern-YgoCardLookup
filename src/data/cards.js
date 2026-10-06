@@ -3,6 +3,7 @@ import { registry } from "../core/registry.js";
 import { settings } from "../core/settings.js";
 import { fetchJson, cached } from "../core/http.js";
 import { getNameIndex, getStatsIndex, normalizeKey } from "./indexes.js";
+import { splitSetcodes, fieldNameOf, fieldNamesWithJpOf } from "./setcodes.js";
 
 /** 1) 常量 */
 export const API_SEARCH = "https://ygocdb.com/api/v0/?search=";
@@ -16,6 +17,15 @@ export function configure(options) { if (options && typeof options.fetchJson ===
 function doFetch(url, ms) { return fetchImpl ? fetchImpl(url, ms) : fetchJson(url, {}, ms); }
 
 /** 2) 纯函数 */
+/** 接口返回的 types 是"换行版"（"[怪兽|效果] 念动力/暗\n[★4] 1900/300"），本地卡库与 parseTypeText 用的是 § 分隔；
+ *  直接塞进去会让 ATK/DEF 解析不到（parts[1] 为空）并把换行带进注入文本。 */
+export function normalizeApiTypes(types) {
+    const s = String(types === undefined || types === null ? "" : types);
+    if (!s) return "";
+    if (s.indexOf("§") >= 0) return s.trim();
+    return s.split(/\r?\n/).map(function (x) { return x.trim(); }).filter(Boolean).join("§");
+}
+
 /** 卡图 URL：9 位视为超先行卡 */
 export function imageUrl(id) {
     const key = String(id || "").trim();
@@ -176,17 +186,20 @@ export async function searchNames(keyword, limit) {
     const exact = [];
     const prefix = [];
     const contains = [];
+    const placed = new Set();   // 同一张卡可能同时命中中文名与英文名两个桶 —— 不记一下就会在结果里出现两次
     for (const row of stats.rows) {
         for (const candidate of [row.name, row.en]) {
             const k = (candidate === row.en) ? normalizeEn(candidate) : normalizeKey(candidate);
             if (!k) continue;
             const needle = (candidate === row.en) ? qEn : q;
             if (!needle) continue;
-            if (k === needle) { if (exact.indexOf(row) < 0) exact.push(row); break; }
+            if (k === needle) { if (!placed.has(row) && exact.indexOf(row) < 0) { exact.push(row); placed.add(row); } break; }
             const at = k.indexOf(needle);
             if (at < 0) continue;
+            if (placed.has(row)) continue;
             const bucket = (at === 0) ? prefix : contains;
             if (bucket.indexOf(row) < 0) bucket.push(row);
+            placed.add(row);
         }
     }
     return exact.concat(prefix, contains).slice(0, want);
@@ -250,68 +263,22 @@ async function extrasText(row, options) {
     const lay = layerOf(o);
     const inc = function (key) { return o[key] === undefined ? settings.get(key) !== false : o[key] !== false; };
     const out = [];
-    // 字段来源：卡密（setcode）→ 字段码 → 字段名表（index:setnames），全部本地/缓存
-    if (inc("includeField") && registry.has("decodeSetcodes") && registry.has("index:setnames")) {
-        try {
-            const detail = await cardDetail(row.id);
-            const raw = detail && (detail.setcode !== undefined ? detail.setcode : (detail.data && detail.data.setcode));
-            if (raw) {
-                const codes = String(raw).split(/[,\s]+/).filter(Boolean).map(function (c) { return /^0x/i.test(c) ? c.toLowerCase() : "0x" + Number(c).toString(16); });   // 接口给的是十进制 setcode（如 221），字段表键是十六进制（0xdd）
-                // 优先自己解（字段表键是十六进制，接口给的是十进制 setcode）：
-                let names = [];
+    // 字段（受分层控制）—— 只保留这一处实现：上面曾经还有一份重复的旧块，
+    // 里面的 hit 变量根本没声明（ReferenceError 被 catch 吞掉），整块是死代码，已删除。
 
-                const jpNames = [];
-                if (registry.has("index:setnames")) {
-                    try {
-                        const sn = await registry.call("index:setnames");
-                        for (const c of codes) {
-                            const num = Number(String(c).replace(/^0x/i, ""));
-                            const hex = "0x" + (String(c).toLowerCase().indexOf("0x") === 0 ? String(c).slice(2).toLowerCase() : (Number.isFinite(num) && num >= 0 ? Math.floor(num).toString(16) : ""));
-
-
-                            const nm = typeof hit === "string" ? hit : (hit && (hit.cn || hit.sc || hit.en)) || "";
-                            const jp = typeof hit === "object" && hit ? String(hit.jp || "") : "";
-                            if (nm && names.indexOf(nm) < 0) names.push(nm);
-                            if (jp && jpNames.indexOf(jp) < 0) jpNames.push(jp);
-                        }
-                    } catch (error) { /* 解不出来就不显示字段 */ }
-                }
-                if (!names.length) {
-                    const decoded = await registry.call("decodeSetcodes", { codes: codes });
-                if (Array.isArray(decoded)) for (const d of decoded) { const nm = (typeof d === "string") ? d : (d && (d.name || d.cn || d.jp)); if (nm && names.indexOf(nm) < 0) names.push(nm); }
-                }
-                if (names.length) out.push("字段: " + names.join(" / ") + (jpNames.length ? "（" + jpNames.join(" / ") + "）" : ""));
-            }
-        } catch (error) { /* 卡密取不到就跳过字段 */ }
-    }
-    // 字段（受分层控制）
-    if (inc("includeField") && layerAllows("field", lay) && registry.has("decodeSetcodes") && registry.has("index:setnames")) {
+    if (inc("includeField") && layerAllows("field", lay) && registry.has("index:setnames")) {
         try {
             const d0 = await cardDetail(row.id);
-            const raw = d0 && (d0.setcode !== undefined ? d0.setcode : null);
+            const raw = d0 && (d0.setcode !== undefined ? d0.setcode : (d0 && d0.data ? d0.data.setcode : null));
             if (raw) {
-                const codes = String(raw).split(/[,\s]+/).filter(Boolean).map(function (c) { return /^0x/i.test(c) ? c.toLowerCase() : "0x" + Number(c).toString(16); });   // 接口给的是十进制 setcode（如 221），字段表键是十六进制（0xdd）
-                // 优先自己解（字段表键是十六进制，接口给的是十进制 setcode）：
-                let names = [];
-
-                const jpNames = [];
-                if (registry.has("index:setnames")) {
-                    try {
-                        const sn = await registry.call("index:setnames");
-                        for (const c of codes) {
-                            const num = Number(String(c).replace(/^0x/i, ""));
-                            const hex = "0x" + (String(c).toLowerCase().indexOf("0x") === 0 ? String(c).slice(2).toLowerCase() : (Number.isFinite(num) && num >= 0 ? Math.floor(num).toString(16) : ""));
-                            const hit = sn && typeof sn.get === "function" ? (sn.get(hex) || sn.get(String(hex).replace(/^0x/i, "")) || sn.get(String(c))) : null;
-                            const nm = typeof hit === "string" ? hit : (hit && (hit.cn || hit.sc || hit.en)) || "";
-                            const jp = (hit && typeof hit === "object" && hit) ? String(hit.jp || "") : "";
-                            if (nm && names.indexOf(nm) < 0) names.push(nm);
-                            if (jp && jpNames.indexOf(jp) < 0) jpNames.push(jp);
-                        }
-                    } catch (error) { /* 解不出来就不显示字段 */ }
-                }
-                if (!names.length) {
-                    const decoded = await registry.call("decodeSetcodes", { codes: codes });
-                if (Array.isArray(decoded)) for (const d of decoded) { const nm = (typeof d === "string") ? d : (d && (d.name || d.cn || d.jp)); if (nm && names.indexOf(nm) < 0) names.push(nm); }
+                // setcode 是位域：必须按 16 位块逐个查（整值查只能命中单字段卡，577 张多字段卡会整行消失）
+                const sn = await registry.call("index:setnames");
+                const found = fieldNamesWithJpOf(sn, raw);
+                const names = found.cn.slice();
+                const jpNames = found.jp.slice();
+                if (!names.length && registry.has("decodeSetcodes")) {
+                    const decoded = await registry.call("decodeSetcodes", { codes: [String(raw)] });
+                    if (Array.isArray(decoded)) for (const d of decoded) { const nm = (typeof d === "string") ? d : (d && (d.name || d.cn || d.jp)); if (nm && names.indexOf(nm) < 0) names.push(nm); }
                 }
                 if (names.length) { out.push("字段: " + names.join(" / ") + (jpNames.length ? "（" + jpNames.join(" / ") + "）" : "")); }   // v1 同款：字段: 青眼（青眼の白龍）
             }
@@ -413,6 +380,16 @@ export function registerCards() {
         const rows = await searchNames(args.query, args.limit);
         if (!rows.length) return "没有匹配「" + String(args.query || "") + "」的卡名。";
         return "「" + String(args.query) + "」匹配 " + rows.length + " 条（显示前 " + rows.length + "）：\n" + rows.map(function (r, i) { return (i + 1) + ". " + r.name + "（" + r.id + "）"; }).join("\n");
+    });
+    // ★ 自然语言触发词「查卡 青眼白龙」走这里。触发词表里有 card，但以前没有对应的 runAction:card，
+    //   于是"匹配上了触发词"反而把自由文本兜底也挡掉了 —— 说得越明确越没反应。
+    registry.provide("runAction:card", async function (trigger) {
+        if (!trigger || trigger.action !== "card") return [];
+        const q = String(trigger.arg || "").trim();
+        if (!q) return [];
+        const row = await findCard(q);
+        if (!row) return [];
+        return [{ name: row.name, text: await cardText({ query: row.id, withDetail: true }) }];
     });
     log("数据", "查卡能力已注册（card/image/search）");
 }
@@ -532,9 +509,8 @@ async function resolveCardsInner(text) {
                     let row = stats.byId.get(String(top.id));
                     const onlineName = String(top.cn_name || top.sc_name || "");
                     if (lv === "strict") { if (normalizeKey(onlineName) !== seg) continue; }   // 严格档：整段必须正好是完整卡名（去空格比较 → 没空格的卡名也能命中）
-                    else if (lv === "strict") { if (normalizeKey(onlineName) !== seg) continue; }   // 严格档：整段必须正好是完整卡名（去空格比较 → 没空格的卡名也能命中）
                     else if (normalizeKey(onlineName).indexOf(seg) < 0) continue;   // 必须真的含这个片段
-                    if (!row) row = { id: String(top.id), cid: String(top.cid || ""), name: onlineName, typeText: String((top.text && top.text.types) || ""), setcode: String((top.data && top.data.setcode) || "0"), en: String(top.en_name || ""), aliases: [] };
+                    if (!row) row = { id: String(top.id), cid: String(top.cid || ""), name: onlineName, typeText: normalizeApiTypes(top.text && top.text.types), setcode: String((top.data && top.data.setcode) || "0"), en: String(top.en_name || ""), aliases: [] };
                     log("查询", "在线兜底命中：「" + seg + "」→ " + row.name);
                     if (registry.has("learnAlias")) { try { await registry.call("learnAlias", { from: seg, to: row.name }); } catch (e9) { /* 忽略 */ } }
                     return [{ name: row.name, text: await cardText({ query: row.id, withDetail: true, layers: "normal" }) }];
@@ -608,7 +584,9 @@ async function resolveSeriesBySearch(keyword) {
     const confidence = bestCount / counted;
     if (confidence < 0.6) return null;
     const sn = registry.has("index:setnames") ? await registry.call("index:setnames") : null;
-    const hit = sn && typeof sn.get === "function" ? (sn.get("0x" + bestCode.toString(16)) || sn.get(String(bestCode))) : null;
+    // 字段表键是"不带 0x 的小写十六进制"（parseSetnames 已剥掉 0x）；
+    // 以前查 sn.get("0x…") 必空、再退化成 sn.get(十进制串) → 张冠李戴（0xa 入魔 会命中键 "10" 薰风）
+    const hit = sn && typeof sn.get === "function" ? (sn.get(bestCode.toString(16)) || sn.get("0x" + bestCode.toString(16))) : null;
     const label = typeof hit === "string" ? hit : (hit && hit.cn) || "";
     if (!label) return null;
     if (confidence >= 0.8 && registry.has("learnAlias")) { try { await registry.call("learnAlias", { from: raw, to: label }); } catch (e) { /* 忽略 */ } }

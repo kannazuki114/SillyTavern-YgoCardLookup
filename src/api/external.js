@@ -72,7 +72,7 @@ export async function callDirect(args) {
         stream: false,
     };
     try {
-        const res = await withTimeout(doFetch(u, { method: "POST", headers: headers, body: JSON.stringify(body) }), a.timeoutMs || DEFAULT_TIMEOUT, "直连请求");
+        const res = await fetchWithTimeout(doFetch, u, { method: "POST", headers: headers, body: JSON.stringify(body) }, a.timeoutMs || DEFAULT_TIMEOUT, "直连请求");
         const raw = String(await res.text().catch(function () { return ""; }));
         if (!res.ok) {
             log("外部", "直连 HTTP " + res.status + "：" + raw.slice(0, 150).replace(/\s+/g, " "));
@@ -107,7 +107,7 @@ export async function fetchModelsDirect(args) {
     if (!doFetch) return { ok: false, error: "当前环境没有 fetch", models: [], tried: tried };
     for (const u of directModelsUrls(a.baseUrl || settings.get("apiUrl"))) {
         try {
-            const res = await withTimeout(doFetch(u, { method: "GET", headers: key ? { "Authorization": "Bearer " + key } : {} }), a.timeoutMs || 15000, "直连拉模型");
+            const res = await fetchWithTimeout(doFetch, u, { method: "GET", headers: key ? { "Authorization": "Bearer " + key } : {} }, a.timeoutMs || 15000, "直连拉模型");
             const raw = String(await res.text().catch(function () { return ""; }));
             tried.push("直连 " + u + " → HTTP " + res.status);
             if (res.status === 401 || res.status === 403) return { ok: false, error: "密钥被拒绝（HTTP " + res.status + "）", models: [], tried: tried };
@@ -351,6 +351,20 @@ export async function withTimeout(promise, ms, label) {
     finally { if (timer) clearTimeout(timer); }
 }
 
+/** 带真正取消的取数：超时就 abort（原来只用 Promise.race，超时后请求还在跑，还被算进熔断失败） */
+export async function fetchWithTimeout(doFetch, url, init, ms, label) {
+    const limit = Math.max(1000, Number(ms) || DEFAULT_TIMEOUT);
+    const controller = typeof AbortController === "function" ? new AbortController() : null;
+    let timer = null;
+    let options = init || {};
+    if (controller) {
+        options = Object.assign({}, options, { signal: controller.signal });
+        timer = setTimeout(function () { try { controller.abort(); } catch (error) { /* 忽略 */ } }, limit);
+    }
+    try { return await withTimeout(doFetch(url, options), limit, label); }
+    finally { if (timer) clearTimeout(timer); }
+}
+
 /** 4) 三条通道 */
 /** 副 API：走官方的 ConnectionManagerRequestService（连接配置） */
 export async function callSecondary(args) {
@@ -413,7 +427,8 @@ export function channelAvailability() {
         { key: "main", name: "酒馆助手 generateRaw", can: !!(th && typeof th.generateRaw === "function"), why: (th && typeof th.generateRaw === "function") ? "检测到 TavernHelper.generateRaw" : "没有检测到酒馆助手（JS-Slash-Runner）" },
         { key: "secondary", name: "连接配置（酒馆连接管理器）", can: profiles.length > 0, why: profiles.length ? (profiles.length + " 条：" + profiles.map(function (p) { return p.name || p.id; }).join("、")) : "没有保存任何连接配置" },
         { key: "route", name: "自填地址（服务端路由 → 失败自动直连）", can: !!baseUrl, why: baseUrl ? ("地址 " + baseUrl) : "没填接口地址" },
-    ];
+        { key: "direct", name: "自填地址（客户端直连）", can: !!baseUrl, why: baseUrl ? ("地址 " + baseUrl + "（浏览器直连）") : "没填接口地址" },
+    ];   // ★ direct 以前没有这一行，而 resolveOrder()/AUTO_ORDER 里都有它 → auto 模式永远选不到直连
     return { rows: rows, available: rows.filter(function (r) { return r.can; }).map(function (r) { return r.key; }), tt: tt, profiles: profiles.length, baseUrl: baseUrl };
 }
 
@@ -475,7 +490,7 @@ export async function callTTMain(args) {
         body.tool_choice = "none";
     } catch (error) { return { ok: false, via: "ttmain", error: "组装请求体失败：" + ((error && error.message) ? error.message : String(error)) }; }
     try {
-        const res = await withTimeout(doFetch(ROUTE_GENERATE, { method: "POST", headers: Object.assign({ "Content-Type": "application/json" }, h.headers), body: JSON.stringify(body) }), a.timeoutMs || DEFAULT_TIMEOUT, "主连接直发");
+        const res = await fetchWithTimeout(doFetch, ROUTE_GENERATE, { method: "POST", headers: Object.assign({ "Content-Type": "application/json" }, h.headers), body: JSON.stringify(body) }, a.timeoutMs || DEFAULT_TIMEOUT, "主连接直发");
         const raw = await readBody(res);
         if (!res.ok) { const e = "HTTP " + res.status + "：" + String(raw).slice(0, 200).replace(/\s+/g, " "); recordFailure(); return { ok: false, via: "ttmain", error: e, raw: raw }; }
         let payload = null;
@@ -506,7 +521,7 @@ export async function callRoute(args) {
     const notes = [];
     for (const body of tries) {
         try {
-            const res = await withTimeout(doFetch(ROUTE_GENERATE, { method: "POST", headers: Object.assign({ "Content-Type": "application/json" }, h.headers), body: JSON.stringify(body) }), a.timeoutMs || DEFAULT_TIMEOUT, "服务器路由");
+            const res = await fetchWithTimeout(doFetch, ROUTE_GENERATE, { method: "POST", headers: Object.assign({ "Content-Type": "application/json" }, h.headers), body: JSON.stringify(body) }, a.timeoutMs || DEFAULT_TIMEOUT, "服务器路由");
             const raw = await readBody(res);
             if (!res.ok) {
                 notes.push(body.chat_completion_source + " → HTTP " + res.status + (raw ? "：" + raw.slice(0, 120).replace(/\s+/g, " ") : ""));
@@ -554,7 +569,7 @@ export async function fetchModels(args) {
             try {
                 const doFetch = (typeof fetch === "function") ? fetch : null;
                 if (doFetch) {
-                    const res = await withTimeout(doFetch(ROUTE_STATUS, { method: "POST", headers: Object.assign({ "Content-Type": "application/json" }, h.headers), body: JSON.stringify(body) }), a.timeoutMs || 15000, "服务端拉模型");
+                    const res = await fetchWithTimeout(doFetch, ROUTE_STATUS, { method: "POST", headers: Object.assign({ "Content-Type": "application/json" }, h.headers), body: JSON.stringify(body) }, a.timeoutMs || 15000, "服务端拉模型");
                     const raw = String(await res.text().catch(function () { return ""; }));
                     tried.push("服务端 " + baseUrl + " → HTTP " + res.status);
                     if (res.ok) {
@@ -606,7 +621,9 @@ export function resolveOrder() {
 export async function askExternal(args) {
     const a = args || {};
     const mode = String(a.mode || settings.get("apiMode") || "off");
-    const timeoutMs = Math.max(3000, Number(settings.get("apiTimeout")) || DEFAULT_TIMEOUT);
+    // 尊重调用方给的预算（拦截器按面板「外部处理预算 / 不阻塞生成」算好传进来）；
+    // 以前读的是 settings.get("apiTimeout") —— 这个设置项根本不存在，于是永远 30 秒。
+    const timeoutMs = Math.max(1000, Number(a.timeoutMs) || DEFAULT_TIMEOUT);
     const base = { system: a.system, user: a.user, messages: a.messages, maxTokens: a.maxTokens || settings.get("apiMaxTokens"), profileId: a.profileId || settings.get("apiProfile"), baseUrl: a.baseUrl, apiKey: a.apiKey, model: a.model, timeoutMs: timeoutMs };
     if (mode === "off") return { ok: false, via: "off", text: "", tried: [], error: "外部接口已关闭（面板「外部接口」里可开启）" };
     if (circuitState().broken) return { ok: false, via: "circuit", text: "", tried: [], error: "外部接口暂时熔断中（连续失败），稍后再试" };
@@ -687,4 +704,4 @@ export function registerExternal() {
     log("外部", "外部接口能力已注册（external:ask / profiles / capability / test）");
 }
 
-export const external = { EXTERNAL_INSTRUCTION, buildCardPrompt, MAX_TOKENS_CEILING, clampMaxTokens, finishReasonOf, MODES, MANUAL_MODEL, resolveOrder, channelAvailability, ttMainAvailable, buildTTMainBody, callTTMain, MAIN_PROXY_SOURCES, readBody, isTauriTavern, buildRouteBodySTNative, directChatUrl, directModelsUrls, callDirect, fetchModelsDirect, parseModelList, normalizeBaseUrl, ROUTE_STATUS, buildRouteBody, effectiveModel, fetchModels, buildCardPrompt, ROUTE_GENERATE, DEFAULT_TIMEOUT, BREAK_THRESHOLD, BREAK_COOLDOWN, hostApis, capabilityReport, listProfiles, pickProfile, buildMessages, extractText, withTimeout, callSecondary, callMain, callRoute, circuitState, recordSuccess, recordFailure, resetCircuit, askExternal, registerExternal };
+export const external = { EXTERNAL_INSTRUCTION, MAX_TOKENS_CEILING, clampMaxTokens, finishReasonOf, MODES, MANUAL_MODEL, resolveOrder, channelAvailability, ttMainAvailable, buildTTMainBody, callTTMain, MAIN_PROXY_SOURCES, readBody, isTauriTavern, buildRouteBodySTNative, directChatUrl, directModelsUrls, callDirect, fetchModelsDirect, parseModelList, normalizeBaseUrl, ROUTE_STATUS, buildRouteBody, effectiveModel, fetchModels, buildCardPrompt, ROUTE_GENERATE, DEFAULT_TIMEOUT, BREAK_THRESHOLD, BREAK_COOLDOWN, hostApis, capabilityReport, listProfiles, pickProfile, buildMessages, extractText, withTimeout, callSecondary, callMain, callRoute, circuitState, recordSuccess, recordFailure, resetCircuit, askExternal, registerExternal };

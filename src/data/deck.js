@@ -1,6 +1,7 @@
 import { ctx, log } from "../core/bus.js";
 import { registry } from "../core/registry.js";
 import { getStatsIndex, getSetnames, normalizeKey } from "./indexes.js";
+import { splitSetcodes, fieldNamesOf } from "./setcodes.js";
 import { seededRandom, todayKey } from "./collection.js";
 import { settings } from "../core/settings.js";
 import { imageUrl } from "./cards.js";
@@ -118,6 +119,10 @@ export async function banlistProblems(merged, limits, region) {
     return out;
 }
 
+/** 区域显示名（面板「查询内容 → 禁限表区域」用哪块表就显示哪块） */
+export function regionNameOf(region) {
+    return region === "ja" || region === "jp" ? "OCG 日文" : region === "en" ? "TCG 英文" : "官方简中";
+}
 export function validateDeckText(deck, limits, region) {
     const base = deckProblems(deck, limits, region);
     const lines = ["📋 卡组校验", "主卡组 " + base.main + " 张 / 额外 " + base.extra + " 张 / 副卡组 " + base.side + " 张，合计 " + (base.main + base.extra + base.side) + " 张"];
@@ -146,21 +151,19 @@ export function simulateHand(pool, draw, runs, random) {
     return results;
 }
 
-/** 系列/字段检索：名字命中 + setcode 解码命中 */
+/**
+ * 系列/字段检索：名字命中 + setcode 解码命中。
+ * ★ 必须是"整块命中"：以前写成"十进制文本里能切出这个码就算"，结果字段码 1（正义盟军）
+ *   会把 setcode=152、14549056… 这些卡全算成成员（实测 14281 张里命中 1828 张）。
+ */
 export function decodeSetcodes(digits, codeSet) {
-    const s = String(digits || "").trim();
-    if (!s || !/^\d+$/.test(s)) return [];
-    const found = new Set();
-    const walk = function (pos) {
-        if (pos >= s.length) return true;
-        for (let len = Math.min(6, s.length - pos); len >= 1; len--) {
-            const chunk = s.slice(pos, pos + len);
-            if (codeSet.has(chunk)) { found.add(chunk); if (walk(pos + len)) return true; }
-        }
-        return false;
-    };
-    walk(0);
-    return [...found];
+    if (!codeSet || typeof codeSet.has !== "function") return [];
+    const found = [];
+    for (const code of splitSetcodes(digits)) {
+        const key = String(code);
+        if (codeSet.has(key) && found.indexOf(key) < 0) found.push(key);
+    }
+    return found;
 }
 
 /** 字段名 → 十进制 code 集合（setnames 键是十六进制） */
@@ -227,7 +230,15 @@ export async function handText(args) {
 
 /** 4) 注册能力 */
 export function registerDeck() {
-registry.provide("decodeSetcodes", async function (args) { return decodeSetcodes((args && args.codes) || args || []); });
+    // 对外能力：setcode（十进制或 0x 十六进制）→ 字段名数组（唯一调用方 cards.js 要的就是名字）
+    registry.provide("decodeSetcodes", async function (args) {
+        const raw = Array.isArray(args) ? args : ((args && (args.codes || args.setcode || args.query)) || []);
+        const list = Array.isArray(raw) ? raw : [raw];
+        const setnames = await getSetnames();
+        const names = [];
+        for (const item of list) for (const nm of fieldNamesOf(setnames, item)) if (names.indexOf(nm) < 0) names.push(nm);
+        return names;
+    });
     registry.provide("tool:deck", async function (args) {
         const picked = deckArgText(args);
         const deck = parseDeckText(picked.text);
@@ -237,12 +248,12 @@ registry.provide("decodeSetcodes", async function (args) { return decodeSetcodes
         let text = base.text;
         try {
             const limits = await getLimits();
-            const extra = await banlistProblems(base.base.merged, limits, "cn");
+            const extra = await banlistProblems(base.base.merged, limits, region);
             const unknown = extra.filter(function (x) { return x.indexOf("找不到") >= 0; });
             const real = extra.filter(function (x) { return x.indexOf("找不到") < 0; });
             if (real.length) text += "\n\n❌ 禁限问题 " + real.length + " 处：\n" + real.map(function (x) { return "· " + x; }).join("\n");
-            else text += "\n\n✅ 禁限表检查通过（官方简中）。";
-            if (unknown.length) text += "\n\n（另有 " + unknown.length + " 张在本地卡库没找到，已跳过：' + '' + '" + unknown.slice(0, 5).map(function (x) { return x.replace(/^「|」.*$/g, ""); }).join("、") + "）";
+            else text += "\n\n✅ 禁限表检查通过（" + (regionNameOf(region)) + "）。";
+            if (unknown.length) text += "\n\n（另有 " + unknown.length + " 张在本地卡库没找到，已跳过：" + unknown.slice(0, 5).map(function (x) { return x.replace(/^「|」.*$/g, ""); }).join("、") + "）";
         } catch (error) { text += "\n\n（禁限表不可用，本次只做了数量与同名检查）"; }
         return (picked.fromChat ? "（卡表来自聊天里的 <deck> 块）\n\n" : "") + text;
     });
@@ -253,6 +264,17 @@ registry.provide("decodeSetcodes", async function (args) { return decodeSetcodes
         if (a === "series") return [{ name: "系列卡表", text: await seriesText(trigger.arg) }];
         if (a === "deck") return [];
         return [];
+    });
+    // ★ 自然语言触发词「起手模拟 / 起手概率」：读聊天里的 <deck> 卡表（与 /ygohand 同一套逻辑）。
+    //   以前 hand 这个动作没有任何数据模块实现，触发词命中后同样什么都不注入。
+    registry.provide("runAction:hand", async function (trigger) {
+        if (!trigger || trigger.action !== "hand") return [];
+        const picked = deckArgText("");
+        const deck = parseDeckText(picked.text);
+        if (!deck.main.length) return [{ name: "起手模拟", text: "要模拟起手的话，先把卡组贴出来（每行「3 卡名」），或写成 <deck>…</deck> 块发一条消息。" }];
+        const arg = String(trigger.arg || "").trim();
+        const draw = /^d{1,3}$/.test(arg) ? Number(arg) : undefined;
+        return [{ name: "起手模拟", text: await handText({ deck: picked.text, draw: draw }) }];
     });
     log("数据", "卡组能力已注册（deck/hand/series）");
 }

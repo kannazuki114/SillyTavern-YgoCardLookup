@@ -10,14 +10,14 @@ export const COMMANDS = [
     { name: "ygocard", help: "查卡：/ygocard 青眼白龙", action: "card", named: [], build: (n, u) => ({ query: u }) },
     { name: "ygorule", help: "官方裁定：/ygorule 灰流丽", action: "ruling", named: ["keyword","limit"], build: (n, u) => ({ query: u, keyword: n.keyword, limit: n.limit }) },
     { name: "ygoart", help: "异画版本：/ygoart 黑魔导", action: "art", named: [], build: (n, u) => ({ query: u }) },
-    { name: "ygopack", help: "开卡包：/ygopack 超级包06", action: "pack", named: ["count","source"], build: (n, u) => ({ pack: u, count: n.count, source: n.source }) },
+    { name: "ygopack", help: "开卡包：/ygopack 超级包06 region=jp", action: "pack", named: ["count","region"], build: (n, u) => ({ pack: u, count: n.count, region: n.region }) },
     { name: "ygodraw", help: "随机抽卡：/ygodraw count=2", action: "draw", named: ["count","kind","attribute"], build: (n) => ({ count: n.count, kind: n.kind, attribute: n.attribute }) },
     { name: "ygodeck", help: "卡组校验：/ygodeck 卡表文本", action: "deck", named: [], build: (n, u) => ({ deck: u }) },
     { name: "ygohand", help: "起手模拟：/ygohand 卡表文本", action: "hand", named: ["draw","runs"], build: (n, u) => ({ deck: u, draw: n.draw, runs: n.runs }) },
     { name: "ygosummon", help: "召唤检查：/ygosummon 青眼白龙", action: "summon", named: ["method"], build: (n, u) => ({ query: u, method: n.method }) },
     { name: "ygoduel", help: "决斗盘：/ygoduel action=show", action: "board", named: ["action","side","value"], build: (n) => ({ action: n.action || "show", side: n.side, value: n.value }) },
-    { name: "ygorecap", help: "本局卡表：/ygorecap", action: "recap", named: ["scope"], build: (n) => ({ scope: n.scope }) },
-    { name: "ygoshop", help: "每日商店：/ygoshop", action: "shop", named: ["size","date"], build: (n) => ({ size: n.size }) },
+    { name: "ygorecap", help: "本局卡表：/ygorecap scope=all limit=20", action: "recap", named: ["scope","limit"], build: (n) => ({ scope: n.scope, limit: n.limit }) },
+    { name: "ygoshop", help: "每日商店：/ygoshop size=5 date=2026-01-01", action: "shop", named: ["size","date"], build: (n) => ({ size: n.size, date: n.date }) },
     { name: "ygoalbum", help: "收藏册：/ygoalbum [系列]", action: "collection", named: [], build: (n, u) => ({ series: u }) },
     { name: "ygoalias", help: "俗称表：/ygoalias 俗称=正式名", action: "alias", named: [], build: (n, u) => ({ text: u }) },
     { name: "ygodiy", help: "自制卡：/ygodiy add name=卡名 type=怪兽/效果", action: "diy", named: ["action","name","type","attribute","race","level","atk","def","desc","image"], build: (n, u) => ({ action: n.action || (u ? "edit" : "editor"), name: n.name, type: n.type, attribute: n.attribute, race: n.race, level: n.level, atk: n.atk, def: n.def, desc: n.desc, image: n.image }) },
@@ -40,7 +40,7 @@ export function normalizeArgs(args) {
 
 /** 纯函数：表自检。 */
 /** 命名参数类型（官方文档：命名参数必须用 SlashCommandNamedArgument.fromProps 声明，否则不会被解析） */
-const TYPE_OF = { count: "number", limit: "number", draw: "number", runs: "number", level: "number", atk: "number", def: "number", size: "number", keyword: "string", source: "string", kind: "string", attribute: "string", method: "string", action: "string", side: "string", value: "string", date: "string", scope: "string", name: "string", type: "string", desc: "string", image: "string", race: "string" };
+const TYPE_OF = { count: "number", limit: "number", region: "string", draw: "number", runs: "number", level: "number", atk: "number", def: "number", size: "number", keyword: "string", source: "string", kind: "string", attribute: "string", method: "string", action: "string", side: "string", value: "string", date: "string", scope: "string", name: "string", type: "string", desc: "string", image: "string", race: "string" };
 
 export function namedProps(keys) {
     const c = ctx();

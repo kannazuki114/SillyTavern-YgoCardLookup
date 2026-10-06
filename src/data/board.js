@@ -109,10 +109,10 @@ export function boardText(board) {
 
 /** 本局卡表：扫描聊天里出现过的卡名（用真实卡库匹配） */
 /** 本局卡表（结构化）：返回 [{id,name,typeText,image}]，供文本与图形两处复用 */
-export async function recapRows(limit) {
+export async function recapRows(limit, scopeOverride) {
     const c = ctx();
     const stats = await getStatsIndex();
-    const scale = settings.get("scanScope") === "all" ? "all" : "last_user";
+    const scale = (scopeOverride || settings.get("scanScope")) === "all" ? "all" : "last_user";
     const chat = Array.isArray(c.chat) ? c.chat : [];
     const picked = scale === "all" ? chat.slice(-30) : chat.filter(function (m) { return m && m.is_user; }).slice(-5);
     const found = new Map();
@@ -131,8 +131,8 @@ export async function recapRows(limit) {
 }
 
 /** 本局卡表：扫描聊天里出现过的卡名（用真实卡库匹配） */
-export async function recapText(limit) {
-    const res = await recapRows(limit);
+export async function recapText(limit, scopeOverride) {
+    const res = await recapRows(limit, scopeOverride);
     if (!res.rows.length) return "本局还没识别到卡名（扫描范围：" + (res.scale === "all" ? "最近 30 条消息" : "最近 5 条玩家消息") + "）。";
     const lines = ["📜 本局卡表 · 共 " + res.rows.length + " 种（扫描：" + (res.scale === "all" ? "最近 30 条消息" : "最近 5 条玩家消息") + "）"];
     for (const r of res.rows) lines.push("· " + r.name + "（" + r.id + "）" + (r.typeText ? " " + r.typeText : ""));
@@ -172,7 +172,7 @@ export function registerBoard() {
         if (!a.action || a.action === "show") return boardText(getBoard());
         return await boardAction(a);
     });
-    registry.provide("tool:recap", async function (args) { return await recapText(args && args.limit); });
+    registry.provide("tool:recap", async function (args) { const a = args || {}; return await recapText(a.limit, a.scope); });
     registry.provide("boardText", async function () { return boardText(getBoard()); });
     registry.provide("runAction:board", async function (trigger) {
         const a = trigger && trigger.action;

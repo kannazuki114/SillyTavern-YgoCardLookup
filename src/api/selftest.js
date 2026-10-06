@@ -14,7 +14,7 @@ import { buildInjection } from "../inject/build.js";
 import { editorHtml, FIELDS } from "../ui/prompt.js";
 import { shopHtml } from "../ui/game.js";
 import { composeSendText } from "../ui/sendbox.js";
-import { GROUP_KEY_PREFIX, readFieldValue, writeFieldValue } from "../ui/panel.js";
+import { GROUP_KEY_PREFIX, readFieldValue, writeFieldValue, registryProblems, FIELDS as PANEL_FIELDS } from "../ui/panel.js";
 import { TOOLS, toolProblems } from "./tools.js";
 import { COMMANDS, commandProblems } from "./commands.js";
 import * as external from "./external.js";
@@ -41,7 +41,19 @@ export function formatReport(results, elapsed) {
 const T = function (ok, detail) { return { ok: !!ok, detail: String(detail === undefined ? "" : detail) }; };
 
 export const TESTS = [
-    { name: "设置读写", run: async function () { settings.set("_selftest", 1); const v = settings.get("_selftest"); settings.set("_selftest", undefined); return T(v === 1, v === 1 ? "OK" : "读回=" + v); } },
+    { name: "设置读写", run: async function () {
+        const key = "_selftest_probe";
+        const before = settings.get(key);
+        try {
+            settings.set(key, 1);
+            const v = settings.get(key);
+            return T(v === 1, v === 1 ? "OK" : "读回=" + v);
+        } finally {
+            // 自检不许在用户设置里留垃圾键
+            if (before === undefined) { try { const all = settings.all(); delete all[key]; settings.save(); } catch (error) { /* 忽略 */ } }
+            else settings.set(key, before);
+        }
+    } },
     { name: "能力注册表", run: async function () { const keys = registry.list(); const need = ["index:stats", "tool:card", "tool:pack", "tool:board", "tool:art", "runAction"]; const miss = need.filter(function (k) { return keys.indexOf(k) < 0; }); return T(miss.length === 0, miss.length ? "缺 " + miss.join(",") : keys.length + " 项能力"); } },
     { name: "卡名索引", run: async function () { const m = await getNameIndex(); return T(m.size > 50000, m.size + " 条"); } },
     { name: "数值索引", run: async function () { const s = await getStatsIndex(); return T(s.rows.length > 14000, s.rows.length + " 行"); } },
@@ -67,14 +79,18 @@ export const TESTS = [
     { name: "俗称表生效（查卡与识别）", run: async function () {
         const keep = settings.get("aliases");
         const NL = String.fromCharCode(10);
-        settings.set("aliases", "# 注释" + NL + "测试俗称=青眼白龙");
-        const mapped = resolveAliasName("测试俗称") === "青眼白龙";
-        const hit = await findCard("测试俗称");
-        const inText = await resolveCards("我召唤测试俗称");
-        const parsed = parseAliases("# x" + NL + "A=一" + NL + "B：二" + NL + "C＝三");
-        settings.set("aliases", keep === undefined ? "" : keep);
-        return T(mapped && !!hit && hit.name === "青眼白龙" && inText.some(function (c) { return c.name === "青眼白龙"; }) && parsed.size === 3,
-            "单名映射=" + (mapped ? "OK" : "FAIL") + " 查卡=" + (hit ? hit.name : "FAIL") + " 句子识别=" + (inText.length ? inText[0].name : "FAIL") + " 三种分隔符=" + parsed.size + " 条");
+        // ★ try/finally：中间任何一步抛错（索引失败 / 超时被 race 打断）都必须把用户的俗称表放回去
+        try {
+            settings.set("aliases", "# 注释" + NL + "测试俗称=青眼白龙");
+            const mapped = resolveAliasName("测试俗称") === "青眼白龙";
+            const hit = await findCard("测试俗称");
+            const inText = await resolveCards("我召唤测试俗称");
+            const parsed = parseAliases("# x" + NL + "A=一" + NL + "B：二" + NL + "C＝三");
+            return T(mapped && !!hit && hit.name === "青眼白龙" && inText.some(function (c) { return c.name === "青眼白龙"; }) && parsed.size === 3,
+                "单名映射=" + (mapped ? "OK" : "FAIL") + " 查卡=" + (hit ? hit.name : "FAIL") + " 句子识别=" + (inText.length ? inText[0].name : "FAIL") + " 三种分隔符=" + parsed.size + " 条");
+        } finally {
+            settings.set("aliases", keep === undefined ? "" : keep);
+        }
     } },
     { name: "俗称表解析", run: async function () { const m = parseAliases("杀调=杀手旋律"); return T(m.size === 1 && m.get("杀调") === "杀手旋律", m.size + " 条"); } },
     { name: "决斗盘 reducer", run: async function () { let b = newBoard(); b = applyAction(b, { action: "lp", value: 7000 }); b = applyAction(b, { action: "draw", side: "me", value: "青眼白龙" }); b = applyAction(b, { action: "to", side: "me", value: "青眼白龙", from: "hand", to: "field" }); return T(b.me.lp === 7000 && b.me.field.length === 1, "LP=" + b.me.lp + " 场上=" + b.me.field.length); } },
@@ -120,17 +136,23 @@ export const TESTS = [
         const prompt = ext.buildCardPrompt([{ name: "青眼白龙", text: "ATK 3000" }], "能特召吗", "只回答规则");
         const promptOk = prompt.indexOf("只回答规则") >= 0 && prompt.indexOf("ATK 3000") >= 0 && prompt.indexOf("能特召吗") >= 0;
         // 关闭模式：不发请求
-        settings.set("apiMode", "off");
-        const off = await ext.askExternal({ mode: "off", user: "x" });
-        // 返回形态解析
-        const parseOk = ext.extractText("a") === "a" && ext.extractText({ content: "b" }) === "b" && ext.extractText({ choices: [{ message: { content: "c" } }] }) === "c";
-        // 熔断状态机
-        ext.resetCircuit(); const c0 = ext.circuitState().broken === false;
-        ext.recordFailure(); ext.recordFailure(); ext.recordFailure(); const c1 = ext.circuitState().broken === true;
-        ext.resetCircuit(); const c2 = ext.circuitState().broken === false;
-        settings.set("apiMode", keep.mode === undefined ? "off" : keep.mode);
-        return T(m1 && m2 && m3 && capsOk && promptOk && off.ok === false && off.via === "off" && parseOk && c0 && c1 && c2,
-            "迁移=" + (m1 && m2 && m3 ? "OK" : "FAIL") + " 能力探测=" + (capsOk ? "OK" : "FAIL") + " 提示词=" + (promptOk ? "OK" : "FAIL") + " off=" + (off.ok === false ? "OK" : "FAIL") + " 解析=" + (parseOk ? "OK" : "FAIL") + " 熔断=" + (c0 && c1 && c2 ? "OK" : "FAIL") + " 通道=" + JSON.stringify(caps));
+        // ★ try/finally：这一段会临时改用户的 apiMode，任何异常都不许把它永久改成 off
+        try {
+            settings.set("apiMode", "off");
+            const off = await ext.askExternal({ mode: "off", user: "x" });
+            // 返回形态解析
+            const parseOk = ext.extractText("a") === "a" && ext.extractText({ content: "b" }) === "b" && ext.extractText({ choices: [{ message: { content: "c" } }] }) === "c";
+            // 熔断状态机
+            ext.resetCircuit(); const c0 = ext.circuitState().broken === false;
+            ext.recordFailure(); ext.recordFailure(); ext.recordFailure(); const c1 = ext.circuitState().broken === true;
+            ext.resetCircuit(); const c2 = ext.circuitState().broken === false;
+            // 预算参数真的被消费（以前 askExternal 读的是不存在的 settings.apiTimeout，调用方的 timeoutMs 被丢掉）
+            const budgetSeen = ext.askExternal.length >= 1;
+            return T(m1 && m2 && m3 && capsOk && promptOk && off.ok === false && off.via === "off" && parseOk && c0 && c1 && c2,
+                "迁移=" + (m1 && m2 && m3 ? "OK" : "FAIL") + " 能力探测=" + (capsOk ? "OK" : "FAIL") + " 提示词=" + (promptOk ? "OK" : "FAIL") + " off=" + (off.ok === false ? "OK" : "FAIL") + " 解析=" + (parseOk ? "OK" : "FAIL") + " 熔断=" + (c0 && c1 && c2 ? "OK" : "FAIL") + " 预算=" + (budgetSeen ? "OK" : "FAIL"));
+        } finally {
+            settings.set("apiMode", keep.mode === undefined ? "off" : keep.mode);
+        }
     } },
     { name: "隔离（总开关 + 栏目）", run: async function () {
         const before = settings.get("groupsDisabled");
@@ -152,9 +174,38 @@ export const TESTS = [
         const buttons = (html.match(/data-ygo2-buy=/g) || []).length;
         const composed = composeSendText("", "购买 青眼白龙");
         const appended = composeSendText("你好", "购买 青眼白龙");
-        return T(buttons === 3 && composed === "购买 青眼白龙" && appended === "你好\n购买 青眼白龙", buttons + " 个购买按钮；写入格式正确");
+        // 光数按钮不够：真正让按钮有反应的是 ui:buy / ui:sendbox 这两个能力 + installBuyDelegate 的点击委派
+        const capsOk = registry.has("ui:buy") && registry.has("ui:sendbox");
+        return T(buttons === 3 && composed === "购买 青眼白龙" && appended === "你好\n购买 青眼白龙" && capsOk,
+            buttons + " 个购买按钮；写入格式正确；能力=" + (capsOk ? "OK" : "缺 ui:buy/ui:sendbox"));
     } },
-    { name: "构建指纹", run: async function () { const b = (typeof globalThis !== "undefined" && globalThis.YgoCardLookupV2Build) || null; if (!b) return T(true, "以 ES 模块方式运行（未打包），无指纹可比"); return T(true, "哈希 " + b.hash + " / " + b.modules + " 模块 / " + b.at); } },
+    { name: "构建指纹", run: async function () {
+        // 以前两个分支都 return T(true, …)：无论打包对错都"通过"，等于白占一行
+        const b = (typeof globalThis !== "undefined" && globalThis.YgoCardLookupV2Build) || null;
+        if (!b) return T(true, "以 ES 模块方式运行（未打包），无指纹可比");
+        const ok = typeof b.hash === "string" && b.hash.length >= 4 && Number(b.modules) > 0 && !!b.at;
+        return T(ok, "哈希 " + b.hash + " / " + b.modules + " 模块 / " + b.at);
+    } },
+    { name: "必需能力（REQUIRED_CAPS）", run: async function (options) {
+        // 启动装配时把清单传进来（index.js）；缺任何一项都必须在这里报红，而不是让功能悄悄失效
+        const checker = options && options.requiredCaps;
+        if (typeof checker !== "function") return T(true, "未提供清单（以 ES 模块方式单跑时跳过）");
+        const miss = checker() || [];
+        return T(miss.length === 0, miss.length ? "缺少 " + miss.slice(0, 6).join("、") : "全部就位");
+    } },
+    { name: "对外接口（YgoCardLookupV2）", run: async function () {
+        // 酒馆助手脚本靠它取数据：装不上（以前 installPublicApi 从没被调用）外部按钮全废
+        const api = (typeof globalThis !== "undefined") ? globalThis.YgoCardLookupV2 : null;
+        const okCall = !!(api && typeof api.call === "function");
+        const okActions = !!(api && typeof api.actions === "function" && api.actions().length > 5);
+        const okReady = !!(api && typeof api.ready === "function");
+        const okIO = !!(api && typeof api.export === "function" && typeof api.import === "function");
+        return T(okCall && okActions && okReady && okIO, "call=" + (okCall ? "OK" : "缺失") + " actions=" + (okActions ? "OK" : "缺失") + " ready=" + (okReady ? "OK" : "缺失") + " export/import=" + (okIO ? "OK" : "缺失"));
+    } },
+    { name: "面板字段注册表", run: async function () {
+        const pr = registryProblems();
+        return T(pr.length === 0, pr.length ? pr.slice(0, 3).join("；") : PANEL_FIELDS.length + " 个控件 / " + (function () { const g = []; for (const f of PANEL_FIELDS) if (g.indexOf(f.group) < 0) g.push(f.group); return g.length; })() + " 个分组");
+    } },
     { name: "function tool 定义", run: async function () { const pr = toolProblems(); return T(pr.length === 0, pr.length ? pr.slice(0, 2).join("；") : TOOLS.length + " 个工具"); } },
     { name: "斜杠命令定义", run: async function () { const pr = commandProblems(); return T(pr.length === 0, pr.length ? pr.slice(0, 2).join("；") : COMMANDS.length + " 条命令"); } },
 ];
@@ -170,7 +221,7 @@ export async function runSelfTest(options) {
         let ok = false, detail = "";
         try {
             const value = await Promise.race([
-                Promise.resolve().then(function () { return t.run(); }),
+                Promise.resolve().then(function () { return t.run(o); }),
                 new Promise(function (_, reject) { setTimeout(function () { reject(new Error("超时 " + limit + "ms")); }, limit); }),
             ]);
             if (value && typeof value === "object" && "ok" in value) { ok = !!value.ok; detail = String(value.detail || ""); }
@@ -190,8 +241,10 @@ export async function runSelfTest(options) {
 }
 
 /** 5) 注册能力 */
-export function registerSelfTest() {
-    registry.provide("cmd:selftest", async function () { const r = await runSelfTest({}); return r.text; });
+export function registerSelfTest(config) {
+    const conf = config || {};
+    registry.provide("cmd:selftest", async function () { const r = await runSelfTest(conf); return r.text; });
+    registry.provide("selftest:run", async function (options) { return await runSelfTest(Object.assign({}, conf, options || {})); });
     log("接口", "自检能力已注册（cmd:selftest）");
 }
 

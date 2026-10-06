@@ -42,10 +42,13 @@ export const TRIGGER_LABELS = {
     recap: "本局卡表", series: "字段查询", selftest: "自检", card: "查卡", search: "模糊搜索",
 };
 /** 组装给外部模型的系统提示（有 external 模块就用它的 buildCardPrompt；否则退化为简易拼装） */
-function buildExternalSystem(conf, cards) {
+async function buildExternalSystem(conf, cards, question) {
     const instruction = conf.apiInstruction;
+    // 这里以前引用了不存在的 text（外层 interceptor 的局部变量）→ 参数求值就 ReferenceError，
+    // 被 catch 吞掉后永远退化成简易拼装，副 AI 拿不到玩家这句话。现在由调用方显式传进来，并且要 await。
     if (registry.has("external:prompt")) {
-        try { return registry.call("external:prompt", { cards: cards, question: String(text || "").slice(0, 800), instruction: instruction }); } catch (error) { /* 退化为下面 */ }
+        try { return await registry.call("external:prompt", { cards: cards, question: String(question || "").slice(0, 800), instruction: instruction }); }
+        catch (error) { log("外部", "组装外部系统提示失败，改用简易拼装：" + (error && error.message ? error.message : error)); }
     }
     const head = String(instruction || "").trim() || "你是游戏王规则助手，只用给定资料回答，不要编造。";
     const body = (cards || []).slice(0, 6).map(function (c) { return "· " + c.name + "：" + String(c.text || "").replace(/\n/g, " ").slice(0, 400); }).join("\n");
@@ -115,13 +118,17 @@ export function createInterceptor() {
             cards = await runTrigger(trigger);
         }
         const freeGroupOn = settings.groupEnabled ? settings.groupEnabled("查询内容") !== false : true;
-        if ((!cards || !cards.length) && !trigger && freeGroupOn && conf.detectFreeText !== false && allowsFreeText() && registry.has("resolveCards")) {
-            kind = "freetext";
-            cards = await registry.call("resolveCards", text);
-        } else if (allowsFreeText() && registry.has("scanCards")) {
-            kind = "scan";
-            cards = await registry.call("scanCards", text);
+        // 触发词没产出资料时（某个动作还没有数据模块、或参数不全）也要退回自由文本识别，
+        // 否则「查卡 青眼白龙」这种把话说全的句子反而一个字都不注入。
+        if ((!cards || !cards.length) && freeGroupOn && conf.detectFreeText !== false && allowsFreeText() && registry.has("resolveCards")) {
+            const scanned = await registry.call("resolveCards", text);
+            if (scanned && scanned.length) {
+                kind = trigger ? (kind + "+freetext") : "freetext";
+                cards = scanned;
+            }
         }
+        // 这里原本还有一条 else-if 走 registry.call("scanCards")：全仓库没人 provide 它，
+        // 而且它的位置在触发词成功之后 —— 真注册了反而会把触发词的结果覆盖掉，已删除。
         // v1 的「用外部 AI 时停用插件自主搜索」：外部接口可用且该开关开着 → 本地检测/触发词全部跳过，直接把玩家输入交给外部 AI
     const externalReady = registry.has("external:ask") && settings.groupEnabled("外部接口") !== false && conf.apiEnabled !== false && String(conf.apiMode || "off") !== "off";
     const externalOnly = externalReady && conf.apiExternalAiOwnSearch !== false;
@@ -141,7 +148,7 @@ export function createInterceptor() {
                     profileId: conf.apiProfile,
                     maxTokens: conf.apiMaxTokens,
                     timeoutMs: budget,
-                    system: buildExternalSystem(conf, cards),
+                    system: await buildExternalSystem(conf, cards, text),
                     user: text,
                 });
                 if (ext && ext.ok && ext.text) {
@@ -192,7 +199,7 @@ export function createInterceptor() {
         const written = await registry.has("writeInjection") ? await registry.call("writeInjection", injection) : false;
         log("注入", cards.length + " 张卡 → " + injection.length + " 字（" + kind + "，" + (Date.now() - started) + "ms）写入=" + written);
         if (conf.logToast === true) {
-            try { const toaster = ctx().toastr; if (toaster && typeof toaster.info === "function") toaster.info("查卡器：已注入 " + cards.length + " 张卡资料"); } catch (error) { /* 忽略 */ }
+            try { const toaster = ctx().toastr || (typeof toastr !== "undefined" ? toastr : null); if (toaster && typeof toaster.info === "function") toaster.info("查卡器：已注入 " + cards.length + " 张卡资料"); } catch (error) { /* 忽略 */ }
         }
         emit("inject", { cards: cards.length, chars: injection.length, kind: kind, written: written });
         // 每次触发都给可见回执（v1 的行为）：标题写明触发路径，内容是被识别到的卡

@@ -84,7 +84,11 @@ export function diyTypeText(card) {
 
 export function normalizeDiyCard(input) {
     const c = input || {};
-    const category = DIY_CATEGORIES.indexOf(c.category) >= 0 ? c.category : "怪兽";
+    // 兼容两种键名：面板/自检传 category，斜杠命令与 function tool 传 type
+    // （曾经只认 category，于是 /ygodiy type=魔法 和 manage_diy_card(type="魔法") 都被静默建成怪兽）
+    const wanted = String(c.category || c.type || "").trim();
+    const category = DIY_CATEGORIES.indexOf(wanted) >= 0 ? wanted
+        : (/魔法|spell/i.test(wanted) ? "魔法" : (/陷阱|trap/i.test(wanted) ? "陷阱" : "怪兽"));
     const frame = category === "怪兽" ? (DIY_MONSTER_FRAMES.indexOf(c.frame) >= 0 ? c.frame : "效果") : "";
     return {
         name: String(c.name || "").trim(),
@@ -280,6 +284,28 @@ export function registerCollection() {
     registry.provide("applyAliasesToText", async function (text) { return applyAliasesToText(text); });
     registry.provide("learnAlias", async function (args) { return learnAlias(args && args.from, args && args.to); });
     registry.provide("collection:add", async function (ids) { return addToCollection(ids); });
+    // 对外接口 export()/import() 依赖这两个能力（以前只有 has() 判断、没人 provide，收藏册导出恒空、导入静默跳过）
+    registry.provide("collection:state", async function () { return collectionState(); });
+    registry.provide("collection:import", async function (args) {
+        const a = args || {};
+        const incoming = a.collection || a.state || {};
+        const mode = String(a.mode || "merge");
+        const cur = collectionState();
+        const srcMap = (incoming && typeof incoming.map === "object" && incoming.map) ? incoming.map
+            : (incoming && typeof incoming === "object" && !Array.isArray(incoming) ? incoming : {});
+        const map = mode === "replace" ? {} : Object.assign({}, cur.map);
+        let kindsAdded = 0;
+        for (const key of Object.keys(srcMap)) {
+            const n = Math.max(0, Number(srcMap[key]) || 0);
+            if (!map[key]) kindsAdded++;
+            map[key] = mode === "replace" ? n : (Number(map[key]) || 0) + n;
+        }
+        const total = Object.keys(map).reduce(function (sum, k) { return sum + (Number(map[k]) || 0); }, 0);
+        const recent = (Array.isArray(incoming.recent) && incoming.recent.length ? incoming.recent : cur.recent).slice(0, 30);
+        settings.save({ [STATS_KEYS.collection]: map, [STATS_KEYS.total]: total, [STATS_KEYS.recent]: recent });
+        log("数据", "收藏册导入：" + mode + " → " + Object.keys(map).length + " 种 / " + total + " 张");
+        return { ok: true, mode: mode, kinds: Object.keys(map).length, kindsAdded: kindsAdded, total: total };
+    });
     registry.provide("runAction:collection", async function (trigger) {
         const a = trigger && trigger.action;
         if (a === "shop") return [{ name: "每日商店", text: await shopText({}) }];

@@ -40,7 +40,6 @@ export const DEFAULTS = {
     apiProfile: "",              // 副 API 用哪条连接（空＝第一条）
     apiBudget: 8000,             // 外部处理预算毫秒（超时就不等）
     apiMaxTokens: 65535,         // 副 API 最大输出（默认 65535；个别网关有上限，被拒时调小）
-    apiNonBlocking: true,        // 超预算就跳过，不拖慢主回复
     apiWebhookReplace: false,      // v1 的「回写时丢弃插件原始数据」：只给 AI 外部结果，去掉本地卡面
     apiNonBlocking: true,
     apiUrl: "",

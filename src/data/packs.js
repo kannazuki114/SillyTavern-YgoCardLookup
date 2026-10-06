@@ -2,9 +2,10 @@ import { log } from "../core/bus.js";
 import { settings } from "../core/settings.js";
 import { registry } from "../core/registry.js";
 import { fetchJson, cached, lazyIndex } from "../core/http.js";
-import { getStatsIndex, normalizeKey } from "./indexes.js";
+import { getStatsIndex, getSetnames, normalizeKey } from "./indexes.js";
 import { addToCollection } from "./collection.js";
-import { findCard } from "./cards.js";
+import { findCard, imageUrl, parseTypeText } from "./cards.js";
+import { splitSetcodes, fieldNameOf } from "./setcodes.js";
 
 /** ── 统一模板（数据模块）：常量 → 纯函数 → 懒索引 → register → exports ── */
 
@@ -124,7 +125,17 @@ export function formatPackDraw(pack, cards) {
 
 /** 3) 懒索引 */
 export const getReleaseRows = lazyIndex(async function () {
-    return await cached("releases", 12 * 3600 * 1000, async function () { return await doFetch(RELEASE_URL, 60000); });
+    // 只把"成功且非空"的结果写进缓存：否则一次断网会让卡包功能瘫 12 小时
+    try {
+        return await cached("releases", 12 * 3600 * 1000, async function () {
+            const rows = await doFetch(RELEASE_URL, 60000);
+            if (!Array.isArray(rows) || !rows.length) throw new Error("发售表为空");
+            return rows;
+        });
+    } catch (error) {
+        log("数据", "卡包发售表取不到（" + (error && error.message ? error.message : error) + "）：卡包功能暂时退化为按本地卡库随机抽卡");
+        return [];
+    }
 });
 export const getPackIndex = lazyIndex(async function () {
     const rows = await getReleaseRows();
@@ -140,7 +151,7 @@ async function rowsToCards(ids) {
     for (const id of ids) {
         const row = stats.byId.get(String(id));
         if (!row) continue;
-        out.push({ id: row.id, cid: row.cid, name: row.name, typeText: row.typeText, image: "https://cdn.233.momobako.com/ygopro/pics/" + row.id + ".jpg" });
+        out.push({ id: row.id, cid: row.cid, name: row.name, typeText: row.typeText, image: imageUrl(row.id) });   // 9 位先行卡图源由 imageUrl 统一处理
     }
     return out;
 }
@@ -148,6 +159,7 @@ async function rowsToCards(ids) {
 /** 4) 业务文本（工具与命令共用） */
 export async function openPackText(args) {
     const index = await getPackIndex();
+    if (args.pack && !index.length) return "卡包发售表取不到（要联网访问 ygocdb 的发售数据）：现在只能用「/ygodraw」按本地卡库随机抽卡，或稍后再试。";
     const region = args.region && REGIONS.indexOf(args.region) >= 0 ? args.region : (settings.get("packRegion") || "sc");   // 面板「玩法 → 卡包地区」
     const minSize = Math.max(1, Number(settings.get("packMinSize")) || 20);   // 面板「玩法 → 卡池下限」
     let pack = args.pack ? findPack(index, args.pack, args.region ? region : null) : null;
@@ -221,14 +233,73 @@ function diyLine(entry, index) {
     return "[" + (index + 1) + "] " + entry.name + "\n" + entry.typeText + (entry.image ? "\n![](" + entry.image + ")" : "\n（DIY 卡，没有卡图）");
 }
 
-export async function drawText(args) {
+/**
+ * 抽卡池：把工具声明的筛选条件（kind/attribute/race/atk_min/archetype）真的用上。
+ * 以前 drawText 只读 count，模型按 schema 传 kind=魔法 attribute=光 也会拿回全库随机卡。
+ */
+export async function drawPoolFor(args) {
+    const a = args || {};
     const stats = await getStatsIndex();
-    const pool = stats.rows.map(function (r) { return r.id; });
+    const kind = String(a.kind || "").trim();
+    const attribute = String(a.attribute || "").trim();
+    const race = String(a.race || "").trim();
+    const atkMin = Number(a.atk_min);
+    const archetype = String(a.archetype || "").trim();
+    const KIND_MATCH = { "怪兽": "[怪兽", "魔法": "[魔法", "陷阱": "[陷阱" };
+    let rows = stats.rows.slice();
+    if (kind && KIND_MATCH[kind]) rows = rows.filter(function (r) { return String(r.typeText || "").indexOf(KIND_MATCH[kind]) >= 0; });
+    if (attribute) rows = rows.filter(function (r) { return String(r.typeText || "").indexOf(attribute) >= 0; });
+    if (race) rows = rows.filter(function (r) { return String(r.typeText || "").indexOf(race) >= 0; });
+    if (Number.isFinite(atkMin) && atkMin > 0) rows = rows.filter(function (r) { const t = parseTypeText(r.typeText); return t.atk !== "" && !isNaN(Number(t.atk)) && Number(t.atk) >= atkMin; });
+    if (archetype) {
+        // 字段：名字/俗称命中 ∪ setcode 位域整块命中（与 cards.js / deck.js 同一套判定）
+        const setnames = await getSetnames();
+        const key = normalizeKey(archetype);
+        const wanted = new Set();
+        for (const [hex, raw] of setnames) {
+            const label = typeof raw === "string" ? raw : String((raw && (raw.cn || raw.sc || raw.jp)) || "");
+            const nk = normalizeKey(label);
+            if (!nk) continue;
+            if (nk === key || nk.indexOf(key) >= 0 || key.indexOf(nk) >= 0) wanted.add(parseInt(hex, 16));
+        }
+        const byName = rows.filter(function (r) { return normalizeKey(r.name).indexOf(key) >= 0 || (r.aliases || []).some(function (x) { return normalizeKey(x).indexOf(key) >= 0; }); });
+        const byCode = wanted.size ? rows.filter(function (r) { return splitSetcodes(r.setcode).some(function (c) { return wanted.has(c); }); }) : [];
+        const map = new Map();
+        for (const r of byName) map.set(r.id, r);
+        for (const r of byCode) map.set(r.id, r);
+        rows = Array.from(map.values());
+    }
+    const pool = rows.map(function (r) { return r.id; });
     const diy = diyPoolEntries();
-    for (const d of diy) pool.push(d.id);        // DIY 卡也进抽卡池
-    const picked = drawFromPool(poolInPlay(pool, stats), Number(args.count) || 2, rng);
+    for (const d of diy) {
+        const t = String(d.typeText || "");
+        if (kind && KIND_MATCH[kind] && t.indexOf(KIND_MATCH[kind]) < 0) continue;
+        if (attribute && t.indexOf(attribute) < 0) continue;
+        if (race && t.indexOf(race) < 0) continue;
+        pool.push(d.id);
+    }
+    return { pool: poolInPlay(pool, stats), diy: diy, matched: rows.length, filters: { kind: kind, attribute: attribute, race: race, atkMin: Number.isFinite(atkMin) ? atkMin : 0, archetype: archetype } };
+}
+/** 筛选条件 → 一行人类可读文本（结果里明示用了哪些条件，不再"静默忽略"） */
+export function describeFilters(f) {
+    const parts = [];
+    if (f.kind) parts.push("类型=" + f.kind);
+    if (f.attribute) parts.push("属性=" + f.attribute);
+    if (f.race) parts.push("种族=" + f.race);
+    if (f.atkMin) parts.push("攻击≥" + f.atkMin);
+    if (f.archetype) parts.push("字段/系列=" + f.archetype);
+    return parts.length ? parts.join(" · ") : "";
+}
+
+export async function drawText(args) {
+    const a = args || {};
+    const stats = await getStatsIndex();
+    const info = await drawPoolFor(a);
+    const filters = describeFilters(info.filters);
+    if (!info.pool.length) return "🎲 没有符合条件的卡（" + (filters || "卡池为空") + "）。放宽条件再试，或用 search_yugioh_cards 先查名字。";
+    const picked = drawFromPool(info.pool, Number(a.count) || 2, rng);
     try { addToCollection(picked); } catch (error) { /* 卡册记录失败不影响抽卡 */ }
-    const diyMap = new Map(diy.map(function (d) { return [d.id, d]; }));
+    const diyMap = new Map(info.diy.map(function (d) { return [d.id, d]; }));
     const rows = [];
     const realIds = picked.filter(function (id) { return !diyMap.has(String(id)); });
     const realCards = await rowsToCards(realIds);
@@ -237,7 +308,8 @@ export async function drawText(args) {
         const d = diyMap.get(String(id));
         rows.push(d ? diyLine(d, rows.length) : (function () { const c = realCards[ri++]; return c ? "[" + rows.length + "] " + c.name + "\n" + c.typeText + "\n![](" + c.image + ")" : ""; })());
     }
-    return "🎲 随机抽卡（卡库共 " + stats.rows.length + " 张" + (diy.length ? " + DIY " + diy.length + " 张" : "") + "）\n" + rows.filter(Boolean).join("\n\n");
+    return "🎲 随机抽卡（卡库共 " + stats.rows.length + " 张" + (info.diy.length ? " + DIY " + info.diy.length + " 张" : "")
+        + (filters ? "；筛选：" + filters + " → 符合 " + info.matched + " 张" : "") + "）\n" + rows.filter(Boolean).join("\n\n");
 }
 
 /** 触发词派发（拦截器用 runAction） */

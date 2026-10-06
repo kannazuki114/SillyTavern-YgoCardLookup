@@ -172,8 +172,12 @@ export async function checkSummon(args) {
     const a = args || {};
     const row = await findCard(a.query);
     if (!row) return "没有找到「" + String(a.query || "") + "」。";
-    const parsed = parseSummonMethod(String(a.method || ""));
-    const method = parsed ? parsed.key : "";
+    // 调用方给的可能是召唤方式的 key（xyz/tribute/…），parseSummonMethod 只认中文写法；
+    // 先按 key 精确匹配，再退回中文解析（否则工具/触发词传 key 时方法被丢掉，判成通常召唤还会落错盘）
+    const rawMethod = String(a.method || "").trim();
+    const direct = SUMMON_METHODS.filter(function (m) { return m.key === rawMethod.toLowerCase(); })[0];
+    const parsed = parseSummonMethod(rawMethod);
+    const method = direct ? direct.key : (parsed ? parsed.key : "");
     const judge = await judgeSummon(row, method, {});
     // 禁限提醒
     try {
@@ -205,7 +209,7 @@ export function registerSummon() {
         if (!arg) return [{ name: "召唤检查", text: "要召唤哪张卡？例如「上级召唤青眼白龙」或「超量召唤 No.39 希望皇 霍普」。" }];
         const parsed = parseSummonMethod(arg);
         const query = parsed ? arg.replace(parsed.re, "").trim() : arg;
-        return [{ name: "召唤检查", text: await checkSummon({ query: query, method: parsed ? parsed.key : "" }) }];
+        return [{ name: "召唤检查", text: await checkSummon({ query: query || arg, method: parsed ? parsed.key : "" }) }];
     });
     registry.provide("tool:summonApply", async function (args) {
         const a = args || {};

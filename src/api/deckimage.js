@@ -79,6 +79,25 @@ export async function deckImageText(text) {
         + (r.unknown.length ? "；未识别 " + r.unknown.length + " 条：" + r.unknown.slice(0, 6).join("、") : "");
 }
 
+/** 从最近几条聊天里找一份"能解析出主卡组"的卡表（面板按钮 / 自然语言触发共用） */
+export function latestDeckText(maxScan) {
+    const c = ctx();
+    const chat = Array.isArray(c.chat) ? c.chat : [];
+    const limit = Math.max(1, Number(maxScan) || 5);
+    for (let i = chat.length - 1, n = 0; i >= 0 && n < limit; i--) {
+        const mes = String((chat[i] && chat[i].mes) || "");
+        if (!mes) continue;
+        if (mes.indexOf("卡组") < 0 && mes.indexOf("主卡组") < 0 && mes.indexOf("<deck>") < 0) continue;
+        n++;
+        const picked = deckArgText(mes);
+        const body = picked && picked.text ? picked.text : mes;
+        // 必须有"数量 + 卡名"的行，且至少 3 行，才当卡表（避免把随口一句"卡组"当成卡表）
+        if (!/\d+\s*\S+/.test(body) || body.split("\n").length < 3) continue;
+        if (parseDeckText(body).main.length) return body;
+    }
+    return "";
+}
+
 /** 3) 打开：新标签页（Blob）优先，回退到弹窗预览 */
 export async function openDeckImage(text) {
     const r = await resolveDeck(text);
@@ -111,17 +130,24 @@ export function registerDeckImage() {
         if (!text) return "要生成卡组图的话，请把卡表贴在命令后面（每行「3 卡名」），或先发一条卡表消息。";
         return await openDeckImage(text);
     });
+    // 面板按钮走的就是这个能力（index.js 的 PANEL_ACTIONS.deckImage）；以前只有 cmd:/runAction: 两个键，
+    // 按钮必然报「未注册的能力：tool:deckimage」。
+    registry.provide("tool:deckimage", async function (args) {
+        const a = args || {};
+        const given = String(a.deck || a.text || "").trim();
+        if (given) return await openDeckImage(given);
+        const found = latestDeckText(5);
+        if (!found) return "聊天里没找到卡表。把卡组写成 <deck>…</deck>（每行「3 卡名」）发一条消息，或直接把卡表贴在命令后面：/ygodeckimage 3 青眼白龙";
+        return await openDeckImage(found);
+    });
     registry.provide("runAction:deckimage", async function (trigger) {
         if (!trigger || trigger.action !== "deckimage") return [];
-        const c = ctx();
-        const chat = Array.isArray(c.chat) ? c.chat : [];
-        for (let i = chat.length - 1, n = 0; i >= 0 && n < 3; i--) {
-            const mes = String((chat[i] && chat[i].mes) || "");
-            if (mes.indexOf("卡组") >= 0 || mes.indexOf("主卡组") >= 0) { n++; if (/d+s*S+/.test(mes) && mes.split("\n").length >= 3) return [{ name: "卡组展示图", text: await openDeckImage(mes) }]; }
-        }
-        return [];
+        // ★ 正则以前写成 /d+s*S+/（反斜杠丢了）→ 永远不匹配，自然语言「卡组图」永远没结果
+        const found = latestDeckText(3);
+        if (!found) return [];
+        return [{ name: "卡组展示图", text: await openDeckImage(found) }];
     });
-    log("接口", "卡组展示图已注册（cmd:deckimage）");
+    log("接口", "卡组展示图已注册（cmd:deckimage / tool:deckimage / runAction:deckimage）");
 }
 
-export const deckImage = { GROUPS, resolveDeck, deckImageHtml, deckImageText, openDeckImage, registerDeckImage };
+export const deckImage = { GROUPS, resolveDeck, deckImageHtml, deckImageText, openDeckImage, latestDeckText, registerDeckImage };

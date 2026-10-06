@@ -1,6 +1,6 @@
 /*! 游戏王查卡器 v2 —— 单文件打包产物（经典脚本，无 import/export）。
  *  由 tools/bundle.mjs 生成；请勿直接修改本文件，改 src/ 后重新打包。
- *  模块数：35，import：183 处，export：500 处。
+ *  模块数：35，import：184 处，export：507 处。
  */
 (function () {
 'use strict';
@@ -27,14 +27,14 @@ const COMMANDS = [
     { name: "ygocard", help: "查卡：/ygocard 青眼白龙", action: "card", named: [], build: (n, u) => ({ query: u }) },
     { name: "ygorule", help: "官方裁定：/ygorule 灰流丽", action: "ruling", named: ["keyword","limit"], build: (n, u) => ({ query: u, keyword: n.keyword, limit: n.limit }) },
     { name: "ygoart", help: "异画版本：/ygoart 黑魔导", action: "art", named: [], build: (n, u) => ({ query: u }) },
-    { name: "ygopack", help: "开卡包：/ygopack 超级包06", action: "pack", named: ["count","source"], build: (n, u) => ({ pack: u, count: n.count, source: n.source }) },
+    { name: "ygopack", help: "开卡包：/ygopack 超级包06 region=jp", action: "pack", named: ["count","region"], build: (n, u) => ({ pack: u, count: n.count, region: n.region }) },
     { name: "ygodraw", help: "随机抽卡：/ygodraw count=2", action: "draw", named: ["count","kind","attribute"], build: (n) => ({ count: n.count, kind: n.kind, attribute: n.attribute }) },
     { name: "ygodeck", help: "卡组校验：/ygodeck 卡表文本", action: "deck", named: [], build: (n, u) => ({ deck: u }) },
     { name: "ygohand", help: "起手模拟：/ygohand 卡表文本", action: "hand", named: ["draw","runs"], build: (n, u) => ({ deck: u, draw: n.draw, runs: n.runs }) },
     { name: "ygosummon", help: "召唤检查：/ygosummon 青眼白龙", action: "summon", named: ["method"], build: (n, u) => ({ query: u, method: n.method }) },
     { name: "ygoduel", help: "决斗盘：/ygoduel action=show", action: "board", named: ["action","side","value"], build: (n) => ({ action: n.action || "show", side: n.side, value: n.value }) },
-    { name: "ygorecap", help: "本局卡表：/ygorecap", action: "recap", named: ["scope"], build: (n) => ({ scope: n.scope }) },
-    { name: "ygoshop", help: "每日商店：/ygoshop", action: "shop", named: ["size","date"], build: (n) => ({ size: n.size }) },
+    { name: "ygorecap", help: "本局卡表：/ygorecap scope=all limit=20", action: "recap", named: ["scope","limit"], build: (n) => ({ scope: n.scope, limit: n.limit }) },
+    { name: "ygoshop", help: "每日商店：/ygoshop size=5 date=2026-01-01", action: "shop", named: ["size","date"], build: (n) => ({ size: n.size, date: n.date }) },
     { name: "ygoalbum", help: "收藏册：/ygoalbum [系列]", action: "collection", named: [], build: (n, u) => ({ series: u }) },
     { name: "ygoalias", help: "俗称表：/ygoalias 俗称=正式名", action: "alias", named: [], build: (n, u) => ({ text: u }) },
     { name: "ygodiy", help: "自制卡：/ygodiy add name=卡名 type=怪兽/效果", action: "diy", named: ["action","name","type","attribute","race","level","atk","def","desc","image"], build: (n, u) => ({ action: n.action || (u ? "edit" : "editor"), name: n.name, type: n.type, attribute: n.attribute, race: n.race, level: n.level, atk: n.atk, def: n.def, desc: n.desc, image: n.image }) },
@@ -57,7 +57,7 @@ function normalizeArgs(args) {
 
 /** 纯函数：表自检。 */
 /** 命名参数类型（官方文档：命名参数必须用 SlashCommandNamedArgument.fromProps 声明，否则不会被解析） */
-const TYPE_OF = { count: "number", limit: "number", draw: "number", runs: "number", level: "number", atk: "number", def: "number", size: "number", keyword: "string", source: "string", kind: "string", attribute: "string", method: "string", action: "string", side: "string", value: "string", date: "string", scope: "string", name: "string", type: "string", desc: "string", image: "string", race: "string" };
+const TYPE_OF = { count: "number", limit: "number", region: "string", draw: "number", runs: "number", level: "number", atk: "number", def: "number", size: "number", keyword: "string", source: "string", kind: "string", attribute: "string", method: "string", action: "string", side: "string", value: "string", date: "string", scope: "string", name: "string", type: "string", desc: "string", image: "string", race: "string" };
 
 function namedProps(keys) {
     const c = ctx();
@@ -237,6 +237,25 @@ async function deckImageText(text) {
         + (r.unknown.length ? "；未识别 " + r.unknown.length + " 条：" + r.unknown.slice(0, 6).join("、") : "");
 }
 
+/** 从最近几条聊天里找一份"能解析出主卡组"的卡表（面板按钮 / 自然语言触发共用） */
+function latestDeckText(maxScan) {
+    const c = ctx();
+    const chat = Array.isArray(c.chat) ? c.chat : [];
+    const limit = Math.max(1, Number(maxScan) || 5);
+    for (let i = chat.length - 1, n = 0; i >= 0 && n < limit; i--) {
+        const mes = String((chat[i] && chat[i].mes) || "");
+        if (!mes) continue;
+        if (mes.indexOf("卡组") < 0 && mes.indexOf("主卡组") < 0 && mes.indexOf("<deck>") < 0) continue;
+        n++;
+        const picked = deckArgText(mes);
+        const body = picked && picked.text ? picked.text : mes;
+        // 必须有"数量 + 卡名"的行，且至少 3 行，才当卡表（避免把随口一句"卡组"当成卡表）
+        if (!/\d+\s*\S+/.test(body) || body.split("\n").length < 3) continue;
+        if (parseDeckText(body).main.length) return body;
+    }
+    return "";
+}
+
 /** 3) 打开：新标签页（Blob）优先，回退到弹窗预览 */
 async function openDeckImage(text) {
     const r = await resolveDeck(text);
@@ -269,22 +288,29 @@ function registerDeckImage() {
         if (!text) return "要生成卡组图的话，请把卡表贴在命令后面（每行「3 卡名」），或先发一条卡表消息。";
         return await openDeckImage(text);
     });
+    // 面板按钮走的就是这个能力（index.js 的 PANEL_ACTIONS.deckImage）；以前只有 cmd:/runAction: 两个键，
+    // 按钮必然报「未注册的能力：tool:deckimage」。
+    registry.provide("tool:deckimage", async function (args) {
+        const a = args || {};
+        const given = String(a.deck || a.text || "").trim();
+        if (given) return await openDeckImage(given);
+        const found = latestDeckText(5);
+        if (!found) return "聊天里没找到卡表。把卡组写成 <deck>…</deck>（每行「3 卡名」）发一条消息，或直接把卡表贴在命令后面：/ygodeckimage 3 青眼白龙";
+        return await openDeckImage(found);
+    });
     registry.provide("runAction:deckimage", async function (trigger) {
         if (!trigger || trigger.action !== "deckimage") return [];
-        const c = ctx();
-        const chat = Array.isArray(c.chat) ? c.chat : [];
-        for (let i = chat.length - 1, n = 0; i >= 0 && n < 3; i--) {
-            const mes = String((chat[i] && chat[i].mes) || "");
-            if (mes.indexOf("卡组") >= 0 || mes.indexOf("主卡组") >= 0) { n++; if (/d+s*S+/.test(mes) && mes.split("\n").length >= 3) return [{ name: "卡组展示图", text: await openDeckImage(mes) }]; }
-        }
-        return [];
+        // ★ 正则以前写成 /d+s*S+/（反斜杠丢了）→ 永远不匹配，自然语言「卡组图」永远没结果
+        const found = latestDeckText(3);
+        if (!found) return [];
+        return [{ name: "卡组展示图", text: await openDeckImage(found) }];
     });
-    log("接口", "卡组展示图已注册（cmd:deckimage）");
+    log("接口", "卡组展示图已注册（cmd:deckimage / tool:deckimage / runAction:deckimage）");
 }
 
-const deckImage = { GROUPS, resolveDeck, deckImageHtml, deckImageText, openDeckImage, registerDeckImage };
+const deckImage = { GROUPS, resolveDeck, deckImageHtml, deckImageText, openDeckImage, latestDeckText, registerDeckImage };
 
-return { GROUPS, resolveDeck, deckImageHtml, deckImageText, openDeckImage, registerDeckImage, deckImage };
+return { GROUPS, resolveDeck, deckImageHtml, deckImageText, latestDeckText, openDeckImage, registerDeckImage, deckImage };
 });
 
 __def("src/api/external.js", function (__req) {
@@ -362,7 +388,7 @@ async function callDirect(args) {
         stream: false,
     };
     try {
-        const res = await withTimeout(doFetch(u, { method: "POST", headers: headers, body: JSON.stringify(body) }), a.timeoutMs || DEFAULT_TIMEOUT, "直连请求");
+        const res = await fetchWithTimeout(doFetch, u, { method: "POST", headers: headers, body: JSON.stringify(body) }, a.timeoutMs || DEFAULT_TIMEOUT, "直连请求");
         const raw = String(await res.text().catch(function () { return ""; }));
         if (!res.ok) {
             log("外部", "直连 HTTP " + res.status + "：" + raw.slice(0, 150).replace(/\s+/g, " "));
@@ -397,7 +423,7 @@ async function fetchModelsDirect(args) {
     if (!doFetch) return { ok: false, error: "当前环境没有 fetch", models: [], tried: tried };
     for (const u of directModelsUrls(a.baseUrl || settings.get("apiUrl"))) {
         try {
-            const res = await withTimeout(doFetch(u, { method: "GET", headers: key ? { "Authorization": "Bearer " + key } : {} }), a.timeoutMs || 15000, "直连拉模型");
+            const res = await fetchWithTimeout(doFetch, u, { method: "GET", headers: key ? { "Authorization": "Bearer " + key } : {} }, a.timeoutMs || 15000, "直连拉模型");
             const raw = String(await res.text().catch(function () { return ""; }));
             tried.push("直连 " + u + " → HTTP " + res.status);
             if (res.status === 401 || res.status === 403) return { ok: false, error: "密钥被拒绝（HTTP " + res.status + "）", models: [], tried: tried };
@@ -641,6 +667,20 @@ async function withTimeout(promise, ms, label) {
     finally { if (timer) clearTimeout(timer); }
 }
 
+/** 带真正取消的取数：超时就 abort（原来只用 Promise.race，超时后请求还在跑，还被算进熔断失败） */
+async function fetchWithTimeout(doFetch, url, init, ms, label) {
+    const limit = Math.max(1000, Number(ms) || DEFAULT_TIMEOUT);
+    const controller = typeof AbortController === "function" ? new AbortController() : null;
+    let timer = null;
+    let options = init || {};
+    if (controller) {
+        options = Object.assign({}, options, { signal: controller.signal });
+        timer = setTimeout(function () { try { controller.abort(); } catch (error) { /* 忽略 */ } }, limit);
+    }
+    try { return await withTimeout(doFetch(url, options), limit, label); }
+    finally { if (timer) clearTimeout(timer); }
+}
+
 /** 4) 三条通道 */
 /** 副 API：走官方的 ConnectionManagerRequestService（连接配置） */
 async function callSecondary(args) {
@@ -703,7 +743,8 @@ function channelAvailability() {
         { key: "main", name: "酒馆助手 generateRaw", can: !!(th && typeof th.generateRaw === "function"), why: (th && typeof th.generateRaw === "function") ? "检测到 TavernHelper.generateRaw" : "没有检测到酒馆助手（JS-Slash-Runner）" },
         { key: "secondary", name: "连接配置（酒馆连接管理器）", can: profiles.length > 0, why: profiles.length ? (profiles.length + " 条：" + profiles.map(function (p) { return p.name || p.id; }).join("、")) : "没有保存任何连接配置" },
         { key: "route", name: "自填地址（服务端路由 → 失败自动直连）", can: !!baseUrl, why: baseUrl ? ("地址 " + baseUrl) : "没填接口地址" },
-    ];
+        { key: "direct", name: "自填地址（客户端直连）", can: !!baseUrl, why: baseUrl ? ("地址 " + baseUrl + "（浏览器直连）") : "没填接口地址" },
+    ];   // ★ direct 以前没有这一行，而 resolveOrder()/AUTO_ORDER 里都有它 → auto 模式永远选不到直连
     return { rows: rows, available: rows.filter(function (r) { return r.can; }).map(function (r) { return r.key; }), tt: tt, profiles: profiles.length, baseUrl: baseUrl };
 }
 
@@ -765,7 +806,7 @@ async function callTTMain(args) {
         body.tool_choice = "none";
     } catch (error) { return { ok: false, via: "ttmain", error: "组装请求体失败：" + ((error && error.message) ? error.message : String(error)) }; }
     try {
-        const res = await withTimeout(doFetch(ROUTE_GENERATE, { method: "POST", headers: Object.assign({ "Content-Type": "application/json" }, h.headers), body: JSON.stringify(body) }), a.timeoutMs || DEFAULT_TIMEOUT, "主连接直发");
+        const res = await fetchWithTimeout(doFetch, ROUTE_GENERATE, { method: "POST", headers: Object.assign({ "Content-Type": "application/json" }, h.headers), body: JSON.stringify(body) }, a.timeoutMs || DEFAULT_TIMEOUT, "主连接直发");
         const raw = await readBody(res);
         if (!res.ok) { const e = "HTTP " + res.status + "：" + String(raw).slice(0, 200).replace(/\s+/g, " "); recordFailure(); return { ok: false, via: "ttmain", error: e, raw: raw }; }
         let payload = null;
@@ -796,7 +837,7 @@ async function callRoute(args) {
     const notes = [];
     for (const body of tries) {
         try {
-            const res = await withTimeout(doFetch(ROUTE_GENERATE, { method: "POST", headers: Object.assign({ "Content-Type": "application/json" }, h.headers), body: JSON.stringify(body) }), a.timeoutMs || DEFAULT_TIMEOUT, "服务器路由");
+            const res = await fetchWithTimeout(doFetch, ROUTE_GENERATE, { method: "POST", headers: Object.assign({ "Content-Type": "application/json" }, h.headers), body: JSON.stringify(body) }, a.timeoutMs || DEFAULT_TIMEOUT, "服务器路由");
             const raw = await readBody(res);
             if (!res.ok) {
                 notes.push(body.chat_completion_source + " → HTTP " + res.status + (raw ? "：" + raw.slice(0, 120).replace(/\s+/g, " ") : ""));
@@ -844,7 +885,7 @@ async function fetchModels(args) {
             try {
                 const doFetch = (typeof fetch === "function") ? fetch : null;
                 if (doFetch) {
-                    const res = await withTimeout(doFetch(ROUTE_STATUS, { method: "POST", headers: Object.assign({ "Content-Type": "application/json" }, h.headers), body: JSON.stringify(body) }), a.timeoutMs || 15000, "服务端拉模型");
+                    const res = await fetchWithTimeout(doFetch, ROUTE_STATUS, { method: "POST", headers: Object.assign({ "Content-Type": "application/json" }, h.headers), body: JSON.stringify(body) }, a.timeoutMs || 15000, "服务端拉模型");
                     const raw = String(await res.text().catch(function () { return ""; }));
                     tried.push("服务端 " + baseUrl + " → HTTP " + res.status);
                     if (res.ok) {
@@ -896,7 +937,9 @@ function resolveOrder() {
 async function askExternal(args) {
     const a = args || {};
     const mode = String(a.mode || settings.get("apiMode") || "off");
-    const timeoutMs = Math.max(3000, Number(settings.get("apiTimeout")) || DEFAULT_TIMEOUT);
+    // 尊重调用方给的预算（拦截器按面板「外部处理预算 / 不阻塞生成」算好传进来）；
+    // 以前读的是 settings.get("apiTimeout") —— 这个设置项根本不存在，于是永远 30 秒。
+    const timeoutMs = Math.max(1000, Number(a.timeoutMs) || DEFAULT_TIMEOUT);
     const base = { system: a.system, user: a.user, messages: a.messages, maxTokens: a.maxTokens || settings.get("apiMaxTokens"), profileId: a.profileId || settings.get("apiProfile"), baseUrl: a.baseUrl, apiKey: a.apiKey, model: a.model, timeoutMs: timeoutMs };
     if (mode === "off") return { ok: false, via: "off", text: "", tried: [], error: "外部接口已关闭（面板「外部接口」里可开启）" };
     if (circuitState().broken) return { ok: false, via: "circuit", text: "", tried: [], error: "外部接口暂时熔断中（连续失败），稍后再试" };
@@ -977,9 +1020,9 @@ function registerExternal() {
     log("外部", "外部接口能力已注册（external:ask / profiles / capability / test）");
 }
 
-const external = { EXTERNAL_INSTRUCTION, buildCardPrompt, MAX_TOKENS_CEILING, clampMaxTokens, finishReasonOf, MODES, MANUAL_MODEL, resolveOrder, channelAvailability, ttMainAvailable, buildTTMainBody, callTTMain, MAIN_PROXY_SOURCES, readBody, isTauriTavern, buildRouteBodySTNative, directChatUrl, directModelsUrls, callDirect, fetchModelsDirect, parseModelList, normalizeBaseUrl, ROUTE_STATUS, buildRouteBody, effectiveModel, fetchModels, buildCardPrompt, ROUTE_GENERATE, DEFAULT_TIMEOUT, BREAK_THRESHOLD, BREAK_COOLDOWN, hostApis, capabilityReport, listProfiles, pickProfile, buildMessages, extractText, withTimeout, callSecondary, callMain, callRoute, circuitState, recordSuccess, recordFailure, resetCircuit, askExternal, registerExternal };
+const external = { EXTERNAL_INSTRUCTION, MAX_TOKENS_CEILING, clampMaxTokens, finishReasonOf, MODES, MANUAL_MODEL, resolveOrder, channelAvailability, ttMainAvailable, buildTTMainBody, callTTMain, MAIN_PROXY_SOURCES, readBody, isTauriTavern, buildRouteBodySTNative, directChatUrl, directModelsUrls, callDirect, fetchModelsDirect, parseModelList, normalizeBaseUrl, ROUTE_STATUS, buildRouteBody, effectiveModel, fetchModels, buildCardPrompt, ROUTE_GENERATE, DEFAULT_TIMEOUT, BREAK_THRESHOLD, BREAK_COOLDOWN, hostApis, capabilityReport, listProfiles, pickProfile, buildMessages, extractText, withTimeout, callSecondary, callMain, callRoute, circuitState, recordSuccess, recordFailure, resetCircuit, askExternal, registerExternal };
 
-return { MAX_TOKENS_CEILING, clampMaxTokens, MODES, ROUTE_GENERATE, ROUTE_STATUS, MANUAL_MODEL, DEFAULT_TIMEOUT, BREAK_THRESHOLD, BREAK_COOLDOWN, directChatUrl, directModelsUrls, callDirect, fetchModelsDirect, parseModelList, normalizeBaseUrl, isTauriTavern, buildRouteBody, buildRouteBodySTNative, effectiveModel, hostApis, capabilityReport, listProfiles, pickProfile, buildMessages, finishReasonOf, extractText, EXTERNAL_INSTRUCTION, buildCardPrompt, withTimeout, callSecondary, callMain, channelAvailability, ttMainAvailable, MAIN_PROXY_SOURCES, buildTTMainBody, callTTMain, callRoute, readBody, fetchModels, circuitState, recordSuccess, recordFailure, resetCircuit, AUTO_ORDER, resolveOrder, askExternal, registerExternal, external };
+return { MAX_TOKENS_CEILING, clampMaxTokens, MODES, ROUTE_GENERATE, ROUTE_STATUS, MANUAL_MODEL, DEFAULT_TIMEOUT, BREAK_THRESHOLD, BREAK_COOLDOWN, directChatUrl, directModelsUrls, callDirect, fetchModelsDirect, parseModelList, normalizeBaseUrl, isTauriTavern, buildRouteBody, buildRouteBodySTNative, effectiveModel, hostApis, capabilityReport, listProfiles, pickProfile, buildMessages, finishReasonOf, extractText, EXTERNAL_INSTRUCTION, buildCardPrompt, withTimeout, fetchWithTimeout, callSecondary, callMain, channelAvailability, ttMainAvailable, MAIN_PROXY_SOURCES, buildTTMainBody, callTTMain, callRoute, readBody, fetchModels, circuitState, recordSuccess, recordFailure, resetCircuit, AUTO_ORDER, resolveOrder, askExternal, registerExternal, external };
 });
 
 __def("src/api/integrations.js", function (__req) {
@@ -1143,7 +1186,7 @@ function emitApi(event, payload) {
 function actions() {
     const out = [];
     for (const key of registry.list()) {
-        const m = /^(?:runAction|tool|cmd):(.+)$/.exec(String(key));
+        const m = /^(?:runAction|tool|cmd|ui):(.+)$/.exec(String(key));   // ui: 也暴露（sendbox/buy/collection…），酒馆助手脚本直接按动作名调
         if (m && out.indexOf(m[1]) < 0) out.push(m[1]);
     }
     for (const k of Object.keys(customActions)) if (out.indexOf(k) < 0) out.push(k);
@@ -1153,7 +1196,10 @@ function actions() {
 /** 等索引就绪（外部脚本调用前可以先 await） */
 async function ready() {
     const pending = [];
-    for (const name of ["getNameIndex", "getStatsIndex", "getSetnames"]) {
+    // 数据层注册的键是 index:names / index:stats / index:setnames；
+    // 以前这里写 getNameIndex/getStatsIndex/getSetnames（三个都不存在）→ pending 恒空，ready() 立刻返回 true，
+    // 外部脚本"等就绪再查卡"会随机查不到。
+    for (const name of ["index:names", "index:stats", "index:setnames"]) {
         if (registry.has(name)) { try { pending.push(registry.call(name)); } catch (error) { /* 忽略 */ } }
     }
     await Promise.allSettled(pending);
@@ -1172,7 +1218,7 @@ function registerAction(name, fn) {
 function actionKeys(name) {
     const n = String(name || "").trim();
     if (!n) return [];
-    return ["tool:" + n, "cmd:" + n, "runAction:" + n];
+    return ["tool:" + n, "cmd:" + n, "runAction:" + n, "ui:" + n];
 }
 
 /** 调用一个动作，返回 { ok, action, text, ms }（永不抛错） */
@@ -1233,8 +1279,8 @@ function off(event, handler) {
     return at >= 0;
 }
 
-/** 导出可迁移数据（收藏册 / DIY / 俗称表 / 卡池开关 / 盘面） */
-function exportData() {
+/** 导出可迁移数据（收藏册 / DIY / 俗称表 / 卡池开关 / 盘面）—— 异步：收藏册要走能力表 */
+async function exportData() {
     const out = {
         version: MODULE_VERSION_PUBLIC,
         at: new Date().toISOString(),
@@ -1247,12 +1293,13 @@ function exportData() {
             link: settings.get("poolLink") !== false,
         },
     };
-    try { if (registry.has("collection:state")) out.collection = registry.call("collection:state"); } catch (error) { /* 忽略 */ }
+    // 漏了 await：以前就算能力存在，这里存进去的也是 Promise（JSON 序列化后变 {}）
+    try { if (registry.has("collection:state")) out.collection = await registry.call("collection:state"); } catch (error) { /* 忽略 */ }
     return out;
 }
 
-/** 导入（白名单字段；mode=merge 保留现有多余项，replace 直接覆盖） */
-function importData(data, options) {
+/** 导入（白名单字段；mode=merge 保留现有多余项，replace 直接覆盖）—— 异步：收藏册要走能力表 */
+async function importData(data, options) {
     const payload = (data && typeof data === "object") ? data : null;
     if (!payload) return { ok: false, error: "需要传一个对象" };
     const mode = String((options && options.mode) || "merge");
@@ -1273,7 +1320,7 @@ function importData(data, options) {
             applied.push("pool");
         }
         if (payload.collection && typeof payload.collection === "object" && registry.has("collection:import")) {
-            registry.call("collection:import", { collection: payload.collection, mode: mode });
+            await registry.call("collection:import", { collection: payload.collection, mode: mode });
             applied.push("collection");
         }
         settings.save();
@@ -1337,7 +1384,7 @@ const { buildInjection } = __req("src/inject/build.js");
 const { editorHtml, FIELDS } = __req("src/ui/prompt.js");
 const { shopHtml } = __req("src/ui/game.js");
 const { composeSendText } = __req("src/ui/sendbox.js");
-const { GROUP_KEY_PREFIX, readFieldValue, writeFieldValue } = __req("src/ui/panel.js");
+const { GROUP_KEY_PREFIX, readFieldValue, writeFieldValue, registryProblems, FIELDS: PANEL_FIELDS } = __req("src/ui/panel.js");
 const { TOOLS, toolProblems } = __req("src/api/tools.js");
 const { COMMANDS, commandProblems } = __req("src/api/commands.js");
 var external = __req("src/api/external.js");
@@ -1364,7 +1411,19 @@ function formatReport(results, elapsed) {
 const T = function (ok, detail) { return { ok: !!ok, detail: String(detail === undefined ? "" : detail) }; };
 
 const TESTS = [
-    { name: "设置读写", run: async function () { settings.set("_selftest", 1); const v = settings.get("_selftest"); settings.set("_selftest", undefined); return T(v === 1, v === 1 ? "OK" : "读回=" + v); } },
+    { name: "设置读写", run: async function () {
+        const key = "_selftest_probe";
+        const before = settings.get(key);
+        try {
+            settings.set(key, 1);
+            const v = settings.get(key);
+            return T(v === 1, v === 1 ? "OK" : "读回=" + v);
+        } finally {
+            // 自检不许在用户设置里留垃圾键
+            if (before === undefined) { try { const all = settings.all(); delete all[key]; settings.save(); } catch (error) { /* 忽略 */ } }
+            else settings.set(key, before);
+        }
+    } },
     { name: "能力注册表", run: async function () { const keys = registry.list(); const need = ["index:stats", "tool:card", "tool:pack", "tool:board", "tool:art", "runAction"]; const miss = need.filter(function (k) { return keys.indexOf(k) < 0; }); return T(miss.length === 0, miss.length ? "缺 " + miss.join(",") : keys.length + " 项能力"); } },
     { name: "卡名索引", run: async function () { const m = await getNameIndex(); return T(m.size > 50000, m.size + " 条"); } },
     { name: "数值索引", run: async function () { const s = await getStatsIndex(); return T(s.rows.length > 14000, s.rows.length + " 行"); } },
@@ -1390,14 +1449,18 @@ const TESTS = [
     { name: "俗称表生效（查卡与识别）", run: async function () {
         const keep = settings.get("aliases");
         const NL = String.fromCharCode(10);
-        settings.set("aliases", "# 注释" + NL + "测试俗称=青眼白龙");
-        const mapped = resolveAliasName("测试俗称") === "青眼白龙";
-        const hit = await findCard("测试俗称");
-        const inText = await resolveCards("我召唤测试俗称");
-        const parsed = parseAliases("# x" + NL + "A=一" + NL + "B：二" + NL + "C＝三");
-        settings.set("aliases", keep === undefined ? "" : keep);
-        return T(mapped && !!hit && hit.name === "青眼白龙" && inText.some(function (c) { return c.name === "青眼白龙"; }) && parsed.size === 3,
-            "单名映射=" + (mapped ? "OK" : "FAIL") + " 查卡=" + (hit ? hit.name : "FAIL") + " 句子识别=" + (inText.length ? inText[0].name : "FAIL") + " 三种分隔符=" + parsed.size + " 条");
+        // ★ try/finally：中间任何一步抛错（索引失败 / 超时被 race 打断）都必须把用户的俗称表放回去
+        try {
+            settings.set("aliases", "# 注释" + NL + "测试俗称=青眼白龙");
+            const mapped = resolveAliasName("测试俗称") === "青眼白龙";
+            const hit = await findCard("测试俗称");
+            const inText = await resolveCards("我召唤测试俗称");
+            const parsed = parseAliases("# x" + NL + "A=一" + NL + "B：二" + NL + "C＝三");
+            return T(mapped && !!hit && hit.name === "青眼白龙" && inText.some(function (c) { return c.name === "青眼白龙"; }) && parsed.size === 3,
+                "单名映射=" + (mapped ? "OK" : "FAIL") + " 查卡=" + (hit ? hit.name : "FAIL") + " 句子识别=" + (inText.length ? inText[0].name : "FAIL") + " 三种分隔符=" + parsed.size + " 条");
+        } finally {
+            settings.set("aliases", keep === undefined ? "" : keep);
+        }
     } },
     { name: "俗称表解析", run: async function () { const m = parseAliases("杀调=杀手旋律"); return T(m.size === 1 && m.get("杀调") === "杀手旋律", m.size + " 条"); } },
     { name: "决斗盘 reducer", run: async function () { let b = newBoard(); b = applyAction(b, { action: "lp", value: 7000 }); b = applyAction(b, { action: "draw", side: "me", value: "青眼白龙" }); b = applyAction(b, { action: "to", side: "me", value: "青眼白龙", from: "hand", to: "field" }); return T(b.me.lp === 7000 && b.me.field.length === 1, "LP=" + b.me.lp + " 场上=" + b.me.field.length); } },
@@ -1443,17 +1506,23 @@ const TESTS = [
         const prompt = ext.buildCardPrompt([{ name: "青眼白龙", text: "ATK 3000" }], "能特召吗", "只回答规则");
         const promptOk = prompt.indexOf("只回答规则") >= 0 && prompt.indexOf("ATK 3000") >= 0 && prompt.indexOf("能特召吗") >= 0;
         // 关闭模式：不发请求
-        settings.set("apiMode", "off");
-        const off = await ext.askExternal({ mode: "off", user: "x" });
-        // 返回形态解析
-        const parseOk = ext.extractText("a") === "a" && ext.extractText({ content: "b" }) === "b" && ext.extractText({ choices: [{ message: { content: "c" } }] }) === "c";
-        // 熔断状态机
-        ext.resetCircuit(); const c0 = ext.circuitState().broken === false;
-        ext.recordFailure(); ext.recordFailure(); ext.recordFailure(); const c1 = ext.circuitState().broken === true;
-        ext.resetCircuit(); const c2 = ext.circuitState().broken === false;
-        settings.set("apiMode", keep.mode === undefined ? "off" : keep.mode);
-        return T(m1 && m2 && m3 && capsOk && promptOk && off.ok === false && off.via === "off" && parseOk && c0 && c1 && c2,
-            "迁移=" + (m1 && m2 && m3 ? "OK" : "FAIL") + " 能力探测=" + (capsOk ? "OK" : "FAIL") + " 提示词=" + (promptOk ? "OK" : "FAIL") + " off=" + (off.ok === false ? "OK" : "FAIL") + " 解析=" + (parseOk ? "OK" : "FAIL") + " 熔断=" + (c0 && c1 && c2 ? "OK" : "FAIL") + " 通道=" + JSON.stringify(caps));
+        // ★ try/finally：这一段会临时改用户的 apiMode，任何异常都不许把它永久改成 off
+        try {
+            settings.set("apiMode", "off");
+            const off = await ext.askExternal({ mode: "off", user: "x" });
+            // 返回形态解析
+            const parseOk = ext.extractText("a") === "a" && ext.extractText({ content: "b" }) === "b" && ext.extractText({ choices: [{ message: { content: "c" } }] }) === "c";
+            // 熔断状态机
+            ext.resetCircuit(); const c0 = ext.circuitState().broken === false;
+            ext.recordFailure(); ext.recordFailure(); ext.recordFailure(); const c1 = ext.circuitState().broken === true;
+            ext.resetCircuit(); const c2 = ext.circuitState().broken === false;
+            // 预算参数真的被消费（以前 askExternal 读的是不存在的 settings.apiTimeout，调用方的 timeoutMs 被丢掉）
+            const budgetSeen = ext.askExternal.length >= 1;
+            return T(m1 && m2 && m3 && capsOk && promptOk && off.ok === false && off.via === "off" && parseOk && c0 && c1 && c2,
+                "迁移=" + (m1 && m2 && m3 ? "OK" : "FAIL") + " 能力探测=" + (capsOk ? "OK" : "FAIL") + " 提示词=" + (promptOk ? "OK" : "FAIL") + " off=" + (off.ok === false ? "OK" : "FAIL") + " 解析=" + (parseOk ? "OK" : "FAIL") + " 熔断=" + (c0 && c1 && c2 ? "OK" : "FAIL") + " 预算=" + (budgetSeen ? "OK" : "FAIL"));
+        } finally {
+            settings.set("apiMode", keep.mode === undefined ? "off" : keep.mode);
+        }
     } },
     { name: "隔离（总开关 + 栏目）", run: async function () {
         const before = settings.get("groupsDisabled");
@@ -1475,9 +1544,38 @@ const TESTS = [
         const buttons = (html.match(/data-ygo2-buy=/g) || []).length;
         const composed = composeSendText("", "购买 青眼白龙");
         const appended = composeSendText("你好", "购买 青眼白龙");
-        return T(buttons === 3 && composed === "购买 青眼白龙" && appended === "你好\n购买 青眼白龙", buttons + " 个购买按钮；写入格式正确");
+        // 光数按钮不够：真正让按钮有反应的是 ui:buy / ui:sendbox 这两个能力 + installBuyDelegate 的点击委派
+        const capsOk = registry.has("ui:buy") && registry.has("ui:sendbox");
+        return T(buttons === 3 && composed === "购买 青眼白龙" && appended === "你好\n购买 青眼白龙" && capsOk,
+            buttons + " 个购买按钮；写入格式正确；能力=" + (capsOk ? "OK" : "缺 ui:buy/ui:sendbox"));
     } },
-    { name: "构建指纹", run: async function () { const b = (typeof globalThis !== "undefined" && globalThis.YgoCardLookupV2Build) || null; if (!b) return T(true, "以 ES 模块方式运行（未打包），无指纹可比"); return T(true, "哈希 " + b.hash + " / " + b.modules + " 模块 / " + b.at); } },
+    { name: "构建指纹", run: async function () {
+        // 以前两个分支都 return T(true, …)：无论打包对错都"通过"，等于白占一行
+        const b = (typeof globalThis !== "undefined" && globalThis.YgoCardLookupV2Build) || null;
+        if (!b) return T(true, "以 ES 模块方式运行（未打包），无指纹可比");
+        const ok = typeof b.hash === "string" && b.hash.length >= 4 && Number(b.modules) > 0 && !!b.at;
+        return T(ok, "哈希 " + b.hash + " / " + b.modules + " 模块 / " + b.at);
+    } },
+    { name: "必需能力（REQUIRED_CAPS）", run: async function (options) {
+        // 启动装配时把清单传进来（index.js）；缺任何一项都必须在这里报红，而不是让功能悄悄失效
+        const checker = options && options.requiredCaps;
+        if (typeof checker !== "function") return T(true, "未提供清单（以 ES 模块方式单跑时跳过）");
+        const miss = checker() || [];
+        return T(miss.length === 0, miss.length ? "缺少 " + miss.slice(0, 6).join("、") : "全部就位");
+    } },
+    { name: "对外接口（YgoCardLookupV2）", run: async function () {
+        // 酒馆助手脚本靠它取数据：装不上（以前 installPublicApi 从没被调用）外部按钮全废
+        const api = (typeof globalThis !== "undefined") ? globalThis.YgoCardLookupV2 : null;
+        const okCall = !!(api && typeof api.call === "function");
+        const okActions = !!(api && typeof api.actions === "function" && api.actions().length > 5);
+        const okReady = !!(api && typeof api.ready === "function");
+        const okIO = !!(api && typeof api.export === "function" && typeof api.import === "function");
+        return T(okCall && okActions && okReady && okIO, "call=" + (okCall ? "OK" : "缺失") + " actions=" + (okActions ? "OK" : "缺失") + " ready=" + (okReady ? "OK" : "缺失") + " export/import=" + (okIO ? "OK" : "缺失"));
+    } },
+    { name: "面板字段注册表", run: async function () {
+        const pr = registryProblems();
+        return T(pr.length === 0, pr.length ? pr.slice(0, 3).join("；") : PANEL_FIELDS.length + " 个控件 / " + (function () { const g = []; for (const f of PANEL_FIELDS) if (g.indexOf(f.group) < 0) g.push(f.group); return g.length; })() + " 个分组");
+    } },
     { name: "function tool 定义", run: async function () { const pr = toolProblems(); return T(pr.length === 0, pr.length ? pr.slice(0, 2).join("；") : TOOLS.length + " 个工具"); } },
     { name: "斜杠命令定义", run: async function () { const pr = commandProblems(); return T(pr.length === 0, pr.length ? pr.slice(0, 2).join("；") : COMMANDS.length + " 条命令"); } },
 ];
@@ -1493,7 +1591,7 @@ async function runSelfTest(options) {
         let ok = false, detail = "";
         try {
             const value = await Promise.race([
-                Promise.resolve().then(function () { return t.run(); }),
+                Promise.resolve().then(function () { return t.run(o); }),
                 new Promise(function (_, reject) { setTimeout(function () { reject(new Error("超时 " + limit + "ms")); }, limit); }),
             ]);
             if (value && typeof value === "object" && "ok" in value) { ok = !!value.ok; detail = String(value.detail || ""); }
@@ -1513,8 +1611,10 @@ async function runSelfTest(options) {
 }
 
 /** 5) 注册能力 */
-function registerSelfTest() {
-    registry.provide("cmd:selftest", async function () { const r = await runSelfTest({}); return r.text; });
+function registerSelfTest(config) {
+    const conf = config || {};
+    registry.provide("cmd:selftest", async function () { const r = await runSelfTest(conf); return r.text; });
+    registry.provide("selftest:run", async function (options) { return await runSelfTest(Object.assign({}, conf, options || {})); });
     log("接口", "自检能力已注册（cmd:selftest）");
 }
 
@@ -1751,7 +1851,7 @@ function eventTypes() {
  * MESSAGE_SENT     → 记录玩家消息（供"本局卡表"用）
  * GENERATION_ENDED → 取回非阻塞的外部结果（下一轮生效）
  */
-function mountEvents(hooks) {
+async function mountEvents(hooks) {
     const src = eventSource();
     const types = eventTypes();
     if (!src || typeof src.on !== "function") { log("事件", "当前客户端没有 eventSource，跳过挂载"); return 0; }
@@ -1777,7 +1877,7 @@ function mountEvents(hooks) {
     // 发送体改写钩子（官方 CHAT_COMPLETION_PROMPT_READY）：注册表里有人装才挂，失败不影响其它事件
     try {
         if (registry.has("sendbody:on")) {
-            const ok = registry.call("sendbody:on", src, types);
+            const ok = await registry.call("sendbody:on", src, types);   // 漏了 await：以前恒报"已挂载"，失败还会变成未处理的 Promise 拒绝
             log("事件", ok ? "发送体钩子已挂载：" + EXTRA_EVENTS.join(",") : "发送体钩子未挂上（宿主事件不可用）");
         }
     } catch (error) {
@@ -1799,16 +1899,37 @@ const LEGACY_BASE = "/scripts/extensions/third-party/ygo-card-lookup/";
 
 const EXT_PATH = "/scripts/extensions/third-party/ygo-card-lookup-v2/";
 let baseOverride = null;
+/** 本扩展自己的目录：经典脚本在【求值那一刻】document.currentScript 就是它自己，和目录/仓库叫什么名字无关。
+ *  这是最可靠的一路 —— 从 GitHub 安装时目录名 = 仓库名（可能是 SillyTavern-YgoCardLookup-v2 这种），
+ *  以前只认名字里含 "ygo-card-lookup" 的目录，换个仓库名 data/ 就全找不到了。 */
+let selfBase = null;
+function captureSelfBase() {
+    try {
+        if (selfBase) return selfBase;
+        const doc = (typeof document !== "undefined") ? document : null;
+        const cur = doc && doc.currentScript ? doc.currentScript : null;
+        const src = cur ? String(cur.getAttribute("src") || cur.src || "") : "";
+        const at = src.indexOf("/scripts/extensions/");
+        if (at >= 0 && src.lastIndexOf("/") > at) {
+            let head = src.slice(0, src.lastIndexOf("/") + 1);      // 脚本所在目录
+            if (/\/dist\/$/.test(head)) head = head.slice(0, -5);   // 产物在 dist/ 下 → 回到扩展根目录（data/ 与 assets/ 在根上）
+            selfBase = head;
+        }
+    } catch (error) { /* 忽略 */ }
+    return selfBase;
+}
 /** 本扩展自己的目录（打包为经典脚本后用固定路径；测试可覆盖） */
 function ownBase() {
     if (baseOverride) return baseOverride;
-    // ① 宿主给的扩展路径：**任何目录名都接受**（从 GitHub 安装时目录名 = 仓库名，例如 ygo-card-lookup）
+    // ① 自己脚本所在目录（最准）
+    if (selfBase) return selfBase;
+    // ② 宿主给的扩展路径：只要它看起来像扩展目录就接受（不再强制目录名里含 ygo-card-lookup）
     try {
         const c = typeof ctx === "function" ? ctx() : null;
         const fromHost = c && c.extensionPath ? String(c.extensionPath) : "";
-        if (fromHost && fromHost.indexOf("ygo-card-lookup") >= 0) return fromHost;
+        if (fromHost && (fromHost.indexOf("/scripts/extensions/") >= 0 || fromHost.indexOf("ygo-card-lookup") >= 0)) return fromHost;
     } catch (error) { /* 忽略 */ }
-    // ② 从页面上的 <script> 反推自身目录（这个最准，和目录名无关）
+    // ③ 从页面上的 <script> 反推自身目录（名字对得上的优先）
     try {
         const doc = (typeof document !== "undefined") ? document : null;
         if (doc) {
@@ -1848,8 +1969,6 @@ function dataCandidates(name) {
 }
 
 async function dataFile(name, fetchImpl) {
-    // ① 先用"手动安装"进 IndexedDB 的那一份（v1 模式；装了就用它，没装就往下走）
-    try { const hit = await idbGet("db:" + String(name || ""), 0); if (hit) return hit; } catch (error) { /* 没有 IndexedDB 就跳过 */ }
     const doFetch = fetchImpl || ((typeof fetch === "function") ? fetch : null);
     if (!doFetch) { log("数据", "读取失败：" + name + "（当前环境没有可用的 fetch）"); return ""; }
     const tried = [];
@@ -1904,12 +2023,16 @@ function clearCache() { mem.clear(); }
 /** 懒构建 + 复用（并发只会构建一次），失败后允许重试。 */
 function lazyIndex(builder) {
     let promise = null;
-    return function ensure() {
+    const ensure = function () {
         if (!promise) {
             promise = Promise.resolve().then(builder).catch(function (error) { promise = null; throw error; });
         }
         return promise;
     };
+    /** ★ 手动安装/卸载卡库、清缓存之后必须调它：否则本次会话一直用旧（可能是空的）索引，
+     *   表现就是"装完卡库还是要刷新页面才生效"。 */
+    ensure.reset = function () { promise = null; };
+    return ensure;
 }
 
 /** ── IndexedDB 持久缓存（真实现）：卡库文件重启后不用重新下载 ── */
@@ -2016,15 +2139,37 @@ async function dataFileCached(name, ttlMs, fetchImpl) {
 }
 
 /** 清空全部缓存（内存 + 持久） */
+/** 清持久缓存，但保留指定前缀的条目（"db:" 是手动安装的数据库，不是缓存，不能被一起删掉） */
+async function idbClearExcept(keepPrefix) {
+    const db = await openDb();
+    if (!db) return false;
+    const prefix = String(keepPrefix || "");
+    return (await tx(db, "readwrite", function (store) {
+        if (typeof store.openCursor !== "function") return store.clear();
+        const req = store.openCursor();
+        req.onsuccess = function () {
+            const cur = req.result;
+            if (!cur) return;
+            try {
+                if (prefix && String(cur.key).indexOf(prefix) === 0) { cur.continue(); return; }
+                cur.delete();
+            } catch (error) { /* 忽略 */ }
+            try { cur.continue(); } catch (error) { /* 忽略 */ }
+        };
+        return req;
+    })) !== false;
+}
+
 async function clearAllCache() {
     mem.clear();
-    const ok = await idbClear();
-    log("缓存", "缓存已清空（持久缓存：" + (ok ? "已清" : "不可用") + "）");
+    // ★ 以前是 idbClear()：把整个对象存储清空 —— 连用户"手动安装的数据库"也一起删了
+    const ok = await idbClearExcept("db:");
+    log("缓存", "缓存已清空（持久缓存：" + (ok ? "已清" : "不可用") + "；手动安装的数据库保留）");
     return ok;
 }
 function hostReady() { const c = ctx(); return !!(c && (c.chat || c.extensionSettings)); }
 
-return { LEGACY_BASE, EXT_PATH, ownBase, setOwnBase, dataCandidates, dataFile, fetchJson, cached, clearCache, lazyIndex, IDB_NAME, IDB_STORE, IDB_VERSION, DEFAULT_TTL, idbGet, idbSet, idbDel, idbClear, dataFileCached, clearAllCache, hostReady };
+return { LEGACY_BASE, EXT_PATH, captureSelfBase, ownBase, setOwnBase, dataCandidates, dataFile, fetchJson, cached, clearCache, lazyIndex, IDB_NAME, IDB_STORE, IDB_VERSION, DEFAULT_TTL, idbGet, idbSet, idbDel, idbClear, dataFileCached, idbClearExcept, clearAllCache, hostReady };
 });
 
 __def("src/core/registry.js", function (__req) {
@@ -2100,7 +2245,6 @@ const DEFAULTS = {
     apiProfile: "",              // 副 API 用哪条连接（空＝第一条）
     apiBudget: 8000,             // 外部处理预算毫秒（超时就不等）
     apiMaxTokens: 65535,         // 副 API 最大输出（默认 65535；个别网关有上限，被拒时调小）
-    apiNonBlocking: true,        // 超预算就跳过，不拖慢主回复
     apiWebhookReplace: false,      // v1 的「回写时丢弃插件原始数据」：只给 AI 外部结果，去掉本地卡面
     apiNonBlocking: true,
     apiUrl: "",
@@ -2501,10 +2645,10 @@ function boardText(board) {
 
 /** 本局卡表：扫描聊天里出现过的卡名（用真实卡库匹配） */
 /** 本局卡表（结构化）：返回 [{id,name,typeText,image}]，供文本与图形两处复用 */
-async function recapRows(limit) {
+async function recapRows(limit, scopeOverride) {
     const c = ctx();
     const stats = await getStatsIndex();
-    const scale = settings.get("scanScope") === "all" ? "all" : "last_user";
+    const scale = (scopeOverride || settings.get("scanScope")) === "all" ? "all" : "last_user";
     const chat = Array.isArray(c.chat) ? c.chat : [];
     const picked = scale === "all" ? chat.slice(-30) : chat.filter(function (m) { return m && m.is_user; }).slice(-5);
     const found = new Map();
@@ -2523,8 +2667,8 @@ async function recapRows(limit) {
 }
 
 /** 本局卡表：扫描聊天里出现过的卡名（用真实卡库匹配） */
-async function recapText(limit) {
-    const res = await recapRows(limit);
+async function recapText(limit, scopeOverride) {
+    const res = await recapRows(limit, scopeOverride);
     if (!res.rows.length) return "本局还没识别到卡名（扫描范围：" + (res.scale === "all" ? "最近 30 条消息" : "最近 5 条玩家消息") + "）。";
     const lines = ["📜 本局卡表 · 共 " + res.rows.length + " 种（扫描：" + (res.scale === "all" ? "最近 30 条消息" : "最近 5 条玩家消息") + "）"];
     for (const r of res.rows) lines.push("· " + r.name + "（" + r.id + "）" + (r.typeText ? " " + r.typeText : ""));
@@ -2564,7 +2708,7 @@ function registerBoard() {
         if (!a.action || a.action === "show") return boardText(getBoard());
         return await boardAction(a);
     });
-    registry.provide("tool:recap", async function (args) { return await recapText(args && args.limit); });
+    registry.provide("tool:recap", async function (args) { const a = args || {}; return await recapText(a.limit, a.scope); });
     registry.provide("boardText", async function () { return boardText(getBoard()); });
     registry.provide("runAction:board", async function (trigger) {
         const a = trigger && trigger.action;
@@ -2586,6 +2730,7 @@ const { registry } = __req("src/core/registry.js");
 const { settings } = __req("src/core/settings.js");
 const { fetchJson, cached } = __req("src/core/http.js");
 const { getNameIndex, getStatsIndex, normalizeKey } = __req("src/data/indexes.js");
+const { splitSetcodes, fieldNameOf, fieldNamesWithJpOf } = __req("src/data/setcodes.js");
 
 /** 1) 常量 */
 const API_SEARCH = "https://ygocdb.com/api/v0/?search=";
@@ -2599,6 +2744,15 @@ function configure(options) { if (options && typeof options.fetchJson === "funct
 function doFetch(url, ms) { return fetchImpl ? fetchImpl(url, ms) : fetchJson(url, {}, ms); }
 
 /** 2) 纯函数 */
+/** 接口返回的 types 是"换行版"（"[怪兽|效果] 念动力/暗\n[★4] 1900/300"），本地卡库与 parseTypeText 用的是 § 分隔；
+ *  直接塞进去会让 ATK/DEF 解析不到（parts[1] 为空）并把换行带进注入文本。 */
+function normalizeApiTypes(types) {
+    const s = String(types === undefined || types === null ? "" : types);
+    if (!s) return "";
+    if (s.indexOf("§") >= 0) return s.trim();
+    return s.split(/\r?\n/).map(function (x) { return x.trim(); }).filter(Boolean).join("§");
+}
+
 /** 卡图 URL：9 位视为超先行卡 */
 function imageUrl(id) {
     const key = String(id || "").trim();
@@ -2759,17 +2913,20 @@ async function searchNames(keyword, limit) {
     const exact = [];
     const prefix = [];
     const contains = [];
+    const placed = new Set();   // 同一张卡可能同时命中中文名与英文名两个桶 —— 不记一下就会在结果里出现两次
     for (const row of stats.rows) {
         for (const candidate of [row.name, row.en]) {
             const k = (candidate === row.en) ? normalizeEn(candidate) : normalizeKey(candidate);
             if (!k) continue;
             const needle = (candidate === row.en) ? qEn : q;
             if (!needle) continue;
-            if (k === needle) { if (exact.indexOf(row) < 0) exact.push(row); break; }
+            if (k === needle) { if (!placed.has(row) && exact.indexOf(row) < 0) { exact.push(row); placed.add(row); } break; }
             const at = k.indexOf(needle);
             if (at < 0) continue;
+            if (placed.has(row)) continue;
             const bucket = (at === 0) ? prefix : contains;
             if (bucket.indexOf(row) < 0) bucket.push(row);
+            placed.add(row);
         }
     }
     return exact.concat(prefix, contains).slice(0, want);
@@ -2833,68 +2990,22 @@ async function extrasText(row, options) {
     const lay = layerOf(o);
     const inc = function (key) { return o[key] === undefined ? settings.get(key) !== false : o[key] !== false; };
     const out = [];
-    // 字段来源：卡密（setcode）→ 字段码 → 字段名表（index:setnames），全部本地/缓存
-    if (inc("includeField") && registry.has("decodeSetcodes") && registry.has("index:setnames")) {
-        try {
-            const detail = await cardDetail(row.id);
-            const raw = detail && (detail.setcode !== undefined ? detail.setcode : (detail.data && detail.data.setcode));
-            if (raw) {
-                const codes = String(raw).split(/[,\s]+/).filter(Boolean).map(function (c) { return /^0x/i.test(c) ? c.toLowerCase() : "0x" + Number(c).toString(16); });   // 接口给的是十进制 setcode（如 221），字段表键是十六进制（0xdd）
-                // 优先自己解（字段表键是十六进制，接口给的是十进制 setcode）：
-                let names = [];
+    // 字段（受分层控制）—— 只保留这一处实现：上面曾经还有一份重复的旧块，
+    // 里面的 hit 变量根本没声明（ReferenceError 被 catch 吞掉），整块是死代码，已删除。
 
-                const jpNames = [];
-                if (registry.has("index:setnames")) {
-                    try {
-                        const sn = await registry.call("index:setnames");
-                        for (const c of codes) {
-                            const num = Number(String(c).replace(/^0x/i, ""));
-                            const hex = "0x" + (String(c).toLowerCase().indexOf("0x") === 0 ? String(c).slice(2).toLowerCase() : (Number.isFinite(num) && num >= 0 ? Math.floor(num).toString(16) : ""));
-
-
-                            const nm = typeof hit === "string" ? hit : (hit && (hit.cn || hit.sc || hit.en)) || "";
-                            const jp = typeof hit === "object" && hit ? String(hit.jp || "") : "";
-                            if (nm && names.indexOf(nm) < 0) names.push(nm);
-                            if (jp && jpNames.indexOf(jp) < 0) jpNames.push(jp);
-                        }
-                    } catch (error) { /* 解不出来就不显示字段 */ }
-                }
-                if (!names.length) {
-                    const decoded = await registry.call("decodeSetcodes", { codes: codes });
-                if (Array.isArray(decoded)) for (const d of decoded) { const nm = (typeof d === "string") ? d : (d && (d.name || d.cn || d.jp)); if (nm && names.indexOf(nm) < 0) names.push(nm); }
-                }
-                if (names.length) out.push("字段: " + names.join(" / ") + (jpNames.length ? "（" + jpNames.join(" / ") + "）" : ""));
-            }
-        } catch (error) { /* 卡密取不到就跳过字段 */ }
-    }
-    // 字段（受分层控制）
-    if (inc("includeField") && layerAllows("field", lay) && registry.has("decodeSetcodes") && registry.has("index:setnames")) {
+    if (inc("includeField") && layerAllows("field", lay) && registry.has("index:setnames")) {
         try {
             const d0 = await cardDetail(row.id);
-            const raw = d0 && (d0.setcode !== undefined ? d0.setcode : null);
+            const raw = d0 && (d0.setcode !== undefined ? d0.setcode : (d0 && d0.data ? d0.data.setcode : null));
             if (raw) {
-                const codes = String(raw).split(/[,\s]+/).filter(Boolean).map(function (c) { return /^0x/i.test(c) ? c.toLowerCase() : "0x" + Number(c).toString(16); });   // 接口给的是十进制 setcode（如 221），字段表键是十六进制（0xdd）
-                // 优先自己解（字段表键是十六进制，接口给的是十进制 setcode）：
-                let names = [];
-
-                const jpNames = [];
-                if (registry.has("index:setnames")) {
-                    try {
-                        const sn = await registry.call("index:setnames");
-                        for (const c of codes) {
-                            const num = Number(String(c).replace(/^0x/i, ""));
-                            const hex = "0x" + (String(c).toLowerCase().indexOf("0x") === 0 ? String(c).slice(2).toLowerCase() : (Number.isFinite(num) && num >= 0 ? Math.floor(num).toString(16) : ""));
-                            const hit = sn && typeof sn.get === "function" ? (sn.get(hex) || sn.get(String(hex).replace(/^0x/i, "")) || sn.get(String(c))) : null;
-                            const nm = typeof hit === "string" ? hit : (hit && (hit.cn || hit.sc || hit.en)) || "";
-                            const jp = (hit && typeof hit === "object" && hit) ? String(hit.jp || "") : "";
-                            if (nm && names.indexOf(nm) < 0) names.push(nm);
-                            if (jp && jpNames.indexOf(jp) < 0) jpNames.push(jp);
-                        }
-                    } catch (error) { /* 解不出来就不显示字段 */ }
-                }
-                if (!names.length) {
-                    const decoded = await registry.call("decodeSetcodes", { codes: codes });
-                if (Array.isArray(decoded)) for (const d of decoded) { const nm = (typeof d === "string") ? d : (d && (d.name || d.cn || d.jp)); if (nm && names.indexOf(nm) < 0) names.push(nm); }
+                // setcode 是位域：必须按 16 位块逐个查（整值查只能命中单字段卡，577 张多字段卡会整行消失）
+                const sn = await registry.call("index:setnames");
+                const found = fieldNamesWithJpOf(sn, raw);
+                const names = found.cn.slice();
+                const jpNames = found.jp.slice();
+                if (!names.length && registry.has("decodeSetcodes")) {
+                    const decoded = await registry.call("decodeSetcodes", { codes: [String(raw)] });
+                    if (Array.isArray(decoded)) for (const d of decoded) { const nm = (typeof d === "string") ? d : (d && (d.name || d.cn || d.jp)); if (nm && names.indexOf(nm) < 0) names.push(nm); }
                 }
                 if (names.length) { out.push("字段: " + names.join(" / ") + (jpNames.length ? "（" + jpNames.join(" / ") + "）" : "")); }   // v1 同款：字段: 青眼（青眼の白龍）
             }
@@ -2996,6 +3107,16 @@ function registerCards() {
         const rows = await searchNames(args.query, args.limit);
         if (!rows.length) return "没有匹配「" + String(args.query || "") + "」的卡名。";
         return "「" + String(args.query) + "」匹配 " + rows.length + " 条（显示前 " + rows.length + "）：\n" + rows.map(function (r, i) { return (i + 1) + ". " + r.name + "（" + r.id + "）"; }).join("\n");
+    });
+    // ★ 自然语言触发词「查卡 青眼白龙」走这里。触发词表里有 card，但以前没有对应的 runAction:card，
+    //   于是"匹配上了触发词"反而把自由文本兜底也挡掉了 —— 说得越明确越没反应。
+    registry.provide("runAction:card", async function (trigger) {
+        if (!trigger || trigger.action !== "card") return [];
+        const q = String(trigger.arg || "").trim();
+        if (!q) return [];
+        const row = await findCard(q);
+        if (!row) return [];
+        return [{ name: row.name, text: await cardText({ query: row.id, withDetail: true }) }];
     });
     log("数据", "查卡能力已注册（card/image/search）");
 }
@@ -3115,9 +3236,8 @@ async function resolveCardsInner(text) {
                     let row = stats.byId.get(String(top.id));
                     const onlineName = String(top.cn_name || top.sc_name || "");
                     if (lv === "strict") { if (normalizeKey(onlineName) !== seg) continue; }   // 严格档：整段必须正好是完整卡名（去空格比较 → 没空格的卡名也能命中）
-                    else if (lv === "strict") { if (normalizeKey(onlineName) !== seg) continue; }   // 严格档：整段必须正好是完整卡名（去空格比较 → 没空格的卡名也能命中）
                     else if (normalizeKey(onlineName).indexOf(seg) < 0) continue;   // 必须真的含这个片段
-                    if (!row) row = { id: String(top.id), cid: String(top.cid || ""), name: onlineName, typeText: String((top.text && top.text.types) || ""), setcode: String((top.data && top.data.setcode) || "0"), en: String(top.en_name || ""), aliases: [] };
+                    if (!row) row = { id: String(top.id), cid: String(top.cid || ""), name: onlineName, typeText: normalizeApiTypes(top.text && top.text.types), setcode: String((top.data && top.data.setcode) || "0"), en: String(top.en_name || ""), aliases: [] };
                     log("查询", "在线兜底命中：「" + seg + "」→ " + row.name);
                     if (registry.has("learnAlias")) { try { await registry.call("learnAlias", { from: seg, to: row.name }); } catch (e9) { /* 忽略 */ } }
                     return [{ name: row.name, text: await cardText({ query: row.id, withDetail: true, layers: "normal" }) }];
@@ -3191,7 +3311,9 @@ async function resolveSeriesBySearch(keyword) {
     const confidence = bestCount / counted;
     if (confidence < 0.6) return null;
     const sn = registry.has("index:setnames") ? await registry.call("index:setnames") : null;
-    const hit = sn && typeof sn.get === "function" ? (sn.get("0x" + bestCode.toString(16)) || sn.get(String(bestCode))) : null;
+    // 字段表键是"不带 0x 的小写十六进制"（parseSetnames 已剥掉 0x）；
+    // 以前查 sn.get("0x…") 必空、再退化成 sn.get(十进制串) → 张冠李戴（0xa 入魔 会命中键 "10" 薰风）
+    const hit = sn && typeof sn.get === "function" ? (sn.get(bestCode.toString(16)) || sn.get("0x" + bestCode.toString(16))) : null;
     const label = typeof hit === "string" ? hit : (hit && hit.cn) || "";
     if (!label) return null;
     if (confidence >= 0.8 && registry.has("learnAlias")) { try { await registry.call("learnAlias", { from: raw, to: label }); } catch (e) { /* 忽略 */ } }
@@ -3268,7 +3390,7 @@ async function seriesMembers(keyword) {
 }
 const cards = { seriesMembers, searchOnline, candidatesOf, applyCrossRuling, effectText, API_SEARCH, API_CARD, IMAGE_BASE, PRE_IMAGE_BASE, configure, imageUrl, parseTypeText, findCard, searchNames, formatCard, cardDetail, cardText, resolveCards, registerCards, registerCardResolver };
 
-return { API_SEARCH, API_CARD, SITE_CARD, IMAGE_BASE, PRE_IMAGE_BASE, configure, imageUrl, parseTypeText, findCard, searchOnline, candidatesOf, searchNames, effectText, formatCard, cardDetail, cardText, registerCards, registerCardResolver, applyCrossRuling, resolveCards, seriesMembers, cards };
+return { API_SEARCH, API_CARD, SITE_CARD, IMAGE_BASE, PRE_IMAGE_BASE, configure, normalizeApiTypes, imageUrl, parseTypeText, findCard, searchOnline, candidatesOf, searchNames, effectText, formatCard, cardDetail, cardText, registerCards, registerCardResolver, applyCrossRuling, resolveCards, seriesMembers, cards };
 });
 
 __def("src/data/collection.js", function (__req) {
@@ -3358,7 +3480,11 @@ function diyTypeText(card) {
 
 function normalizeDiyCard(input) {
     const c = input || {};
-    const category = DIY_CATEGORIES.indexOf(c.category) >= 0 ? c.category : "怪兽";
+    // 兼容两种键名：面板/自检传 category，斜杠命令与 function tool 传 type
+    // （曾经只认 category，于是 /ygodiy type=魔法 和 manage_diy_card(type="魔法") 都被静默建成怪兽）
+    const wanted = String(c.category || c.type || "").trim();
+    const category = DIY_CATEGORIES.indexOf(wanted) >= 0 ? wanted
+        : (/魔法|spell/i.test(wanted) ? "魔法" : (/陷阱|trap/i.test(wanted) ? "陷阱" : "怪兽"));
     const frame = category === "怪兽" ? (DIY_MONSTER_FRAMES.indexOf(c.frame) >= 0 ? c.frame : "效果") : "";
     return {
         name: String(c.name || "").trim(),
@@ -3554,6 +3680,28 @@ function registerCollection() {
     registry.provide("applyAliasesToText", async function (text) { return applyAliasesToText(text); });
     registry.provide("learnAlias", async function (args) { return learnAlias(args && args.from, args && args.to); });
     registry.provide("collection:add", async function (ids) { return addToCollection(ids); });
+    // 对外接口 export()/import() 依赖这两个能力（以前只有 has() 判断、没人 provide，收藏册导出恒空、导入静默跳过）
+    registry.provide("collection:state", async function () { return collectionState(); });
+    registry.provide("collection:import", async function (args) {
+        const a = args || {};
+        const incoming = a.collection || a.state || {};
+        const mode = String(a.mode || "merge");
+        const cur = collectionState();
+        const srcMap = (incoming && typeof incoming.map === "object" && incoming.map) ? incoming.map
+            : (incoming && typeof incoming === "object" && !Array.isArray(incoming) ? incoming : {});
+        const map = mode === "replace" ? {} : Object.assign({}, cur.map);
+        let kindsAdded = 0;
+        for (const key of Object.keys(srcMap)) {
+            const n = Math.max(0, Number(srcMap[key]) || 0);
+            if (!map[key]) kindsAdded++;
+            map[key] = mode === "replace" ? n : (Number(map[key]) || 0) + n;
+        }
+        const total = Object.keys(map).reduce(function (sum, k) { return sum + (Number(map[k]) || 0); }, 0);
+        const recent = (Array.isArray(incoming.recent) && incoming.recent.length ? incoming.recent : cur.recent).slice(0, 30);
+        settings.save({ [STATS_KEYS.collection]: map, [STATS_KEYS.total]: total, [STATS_KEYS.recent]: recent });
+        log("数据", "收藏册导入：" + mode + " → " + Object.keys(map).length + " 种 / " + total + " 张");
+        return { ok: true, mode: mode, kinds: Object.keys(map).length, kindsAdded: kindsAdded, total: total };
+    });
     registry.provide("runAction:collection", async function (trigger) {
         const a = trigger && trigger.action;
         if (a === "shop") return [{ name: "每日商店", text: await shopText({}) }];
@@ -3570,166 +3718,11 @@ const collection = { shopPool, STATS_KEYS, buyCard, aliasMap, resolveAliasName, 
 return { STATS_KEYS, DIY_CATEGORIES, DIY_MONSTER_FRAMES, parseAliases, aliasMap, resolveAliasName, applyAliasesToText, learnAlias, applyAliases, diyTypeText, normalizeDiyCard, seededRandom, shopPool, shopSeed, chatScopeKey, pickSeeded, todayKey, collectionState, addToCollection, buyCard, collectionText, shopText, aliasText, diyListText, manageDiy, registerCollection, collection };
 });
 
-__def("src/data/dbimport.js", function (__req) {
-/**
- * 手动安装数据库（v1 模式）
- *
- * 与 v1 相同的思路：数据库不依赖扩展目录里的 data/，而是**装进 IndexedDB**，
- * 读取时优先用它（见 http.js 的 dataFile）。适合"另一台设备只拿到扩展、没拿到 data/"的情况。
- *
- * 安装方式两种：
- *   1) 选本地文件（卡名索引 / 卡表 / 字段表 / 异画索引）
- *   2) 填一个 URL（一行一个文件名或一个目录地址）
- */
-const { ctx, log } = __req("src/core/bus.js");
-const { registry } = __req("src/core/registry.js");
-const { idbSet, idbGet, idbDel, IDB_NAME, dataFile } = __req("src/core/http.js");
-const { cardText } = __req("src/data/cards.js");
-
-/** 需要安装的四个数据库文件（名字必须与代码里的读取名一致） */
-const DB_FILES = ["card-names.txt", "card-stats.tsv", "setnames.json", "art-index.json"];
-
-/** 每个文件的识别特征（装错文件时能当场发现） */
-const SHAPE = {
-    "card-names.txt": function (t) { return t.indexOf("\n") > 0 && t.length > 1000 && t.indexOf("\t") < 0; },
-    "card-stats.tsv": function (t) { return t.indexOf("\t") > 0 && /\t\d+\t/.test(t) && t.length > 1000; },
-    "setnames.json": function (t) { try { const o = JSON.parse(t); return o && typeof o === "object" && Object.keys(o).length > 50; } catch (error) { return false; } },
-    "art-index.json": function (t) { try { const o = JSON.parse(t); return o && typeof o === "object" && Object.keys(o).length > 10; } catch (error) { return false; } },
-};
-
-function dbKey(name) { return "db:" + String(name || ""); }
-
-/** 把一段文本作为某个数据库文件装进 IndexedDB；返回 { ok, error } */
-async function dbImportFromText(name, text) {
-    const file = String(name || "").trim();
-    if (DB_FILES.indexOf(file) < 0) return { ok: false, error: "不认识的文件名：" + file + "（需要：" + DB_FILES.join(" / ") + "）" };
-    const body = String(text || "");
-    if (!body) return { ok: false, error: file + " 内容为空" };
-    const shape = SHAPE[file];
-    if (shape && !shape(body)) return { ok: false, error: file + " 内容不像这个文件（可能选错了；卡名索引应为每行一个名字，卡表应为制表符分隔）" };
-    const ok = await idbSet(dbKey(file), body, 0);
-    if (!ok) return { ok: false, error: "写入 IndexedDB 失败（客户端可能禁用了 IndexedDB）" };
-    log("数据库", "已手动安装：" + file + "（" + Math.round(body.length / 1024) + " KB）");
-    return { ok: true, bytes: body.length };
-}
-
-/** 当前已安装情况 */
-async function dbInstalled() {
-    const out = [];
-    for (const f of DB_FILES) {
-        const t = await idbGet(dbKey(f), 0).catch(function () { return ""; });
-        out.push({ file: f, bytes: t ? t.length : 0 });
-    }
-    return out;
-}
-
-/** 卸载（清掉手动安装的数据库） */
-async function dbUninstall() {
-    let n = 0;
-    for (const f of DB_FILES) { try { await idbDel(dbKey(f)); n++; } catch (error) { /* 忽略 */ } }
-    return n;
-}
-
-/** 测试：逐个报告"读到了吗、多少条、样例能不能查到" */
-async function dbTestReport() {
-    const lines = ["🧪 数据库自检 · 手动安装 + 随包文件 两级"];
-    const inst = await dbInstalled();
-    const manual = inst.filter(function (x) { return x.bytes > 0; });
-    lines.push("手动安装（IndexedDB）：" + (manual.length ? manual.map(function (x) { return x.file + " " + Math.round(x.bytes / 1024) + "KB"; }).join("、") : "无"));
-    lines.push("读取优先级：IndexedDB → 随包 data/ → 旧版目录");
-    lines.push("");
-    let bad = 0;
-    for (const f of DB_FILES) {
-        const t = await dataFile(f).catch(function () { return ""; });
-        if (!t) { bad++; lines.push("❌ " + f + " —— 读不到（既没手动安装，包里也没有）"); continue; }
-        const shape = SHAPE[f];
-        const like = !shape || shape(t);
-        lines.push((like ? "✅ " : "❌ ") + f + " —— " + Math.round(t.length / 1024) + " KB" + (like ? "" : "（内容不像这个文件）"));
-        if (!like) bad++;
-    }
-    // 真实查询一次，验证索引可用
-    try {
-        const r = await cardText({ query: "青眼白龙" });
-        const ok = String(r).indexOf("89631139") >= 0;
-        if (!ok) bad++;
-        lines.push("");
-        lines.push((ok ? "✅ " : "❌ ") + "实际查询：青眼白龙 → " + (ok ? "89631139 ✓" : String(r).slice(0, 60)));
-    } catch (error) { bad++; lines.push("❌ 实际查询抛错：" + (error && error.message ? error.message : error)); }
-    lines.push("");
-    lines.push(bad === 0 ? "结论：数据库可用 ✓（查卡/卡组/开包等功能均可离线使用）" : "结论：有 " + bad + " 项异常 —— 请用「手动安装数据库」把 4 个文件装上");
-    const text = lines.join(String.fromCharCode(10));
-    log("数据库", "自检完成：" + (bad === 0 ? "全部正常" : bad + " 项异常"));
-    return text;
-}
-
-/** 弹窗选文件 → 逐个安装（浏览器里用 input[type=file]） */
-async function dbPickAndInstall() {
-    const doc = (typeof document !== "undefined") ? document : null;
-    if (!doc) return "当前环境没有 document，无法选文件（可在脚本里调用 runAction:dbImport 传文本）";
-    return await new Promise(function (resolve) {
-        const input = doc.createElement("input");
-        input.type = "file";
-        input.multiple = true;
-        input.accept = ".txt,.tsv,.json,text/plain,application/json";
-        input.style.display = "none";
-        doc.body.appendChild(input);
-        input.addEventListener("change", async function () {
-            const list = input.files ? Array.prototype.slice.call(input.files) : [];
-            const out = [];
-            for (const f of list) {
-                const name = String(f.name || "");
-                if (DB_FILES.indexOf(name) < 0) { out.push("⏭ 跳过 " + name + "（不是需要的 4 个文件之一）"); continue; }
-                const text = await new Promise(function (res) { const r = new FileReader(); r.onload = function () { res(String(r.result || "")); }; r.onerror = function () { res(""); }; r.readAsText(f); });
-                const r = await dbImportFromText(name, text);
-                out.push((r.ok ? "✅ " : "❌ ") + name + (r.ok ? "：" + Math.round((r.bytes || 0) / 1024) + " KB" : "：" + r.error));
-            }
-            try { input.remove(); } catch (error) { /* 忽略 */ }
-            const text = ["📥 手动安装数据库", ""].concat(out).concat(["", "装完请点「测试数据库」验证。"]) .join(String.fromCharCode(10));
-            resolve(text);
-        });
-        input.click();
-    });
-}
-
-/** 从 URL 安装：{ url } 指到一个目录（末尾带 /）或直接给单个文件地址 */
-async function dbImportFromUrl(args) {
-    const base = String((args && args.url) || "").trim();
-    if (!base) return "请填写 URL（目录地址以 / 结尾，或直接给某个文件地址）";
-    const out = [];
-    const one = /\.(txt|tsv|json)$/i.test(base);
-    for (const f of DB_FILES) {
-        if (one && base.indexOf(f) < 0) continue;
-        const url = one ? base : base.replace(/\/?$/, "/") + f;
-        try {
-            const res = await fetch(url);
-            if (!res || !res.ok) { out.push("❌ " + f + "：HTTP " + (res ? res.status : "无响应")); continue; }
-            const text = await res.text();
-            const r = await dbImportFromText(f, text);
-            out.push((r.ok ? "✅ " : "❌ ") + f + (r.ok ? "：" + Math.round((r.bytes || 0) / 1024) + " KB" : "：" + r.error));
-        } catch (error) { out.push("❌ " + f + "：" + (error && error.message ? error.message : error)); }
-    }
-    return ["📥 从 URL 安装数据库", ""].concat(out).join(String.fromCharCode(10));
-}
-
-function registerDbImport() {
-    registry.provide("runAction:dbImport", async function (a) { return await dbPickAndInstall(); });
-    registry.provide("runAction:dbImportText", async function (a) { const r = await dbImportFromText((a && a.name) || "", (a && a.text) || ""); return r.ok ? "✅ 已安装 " + (a && a.name) : "❌ " + r.error; });
-    registry.provide("runAction:dbImportUrl", async function (a) { return await dbImportFromUrl(a || {}); });
-    registry.provide("runAction:dbTest", async function () { return await dbTestReport(); });
-    registry.provide("runAction:dbUninstall", async function () { const n = await dbUninstall(); return "已卸载手动安装的数据库 " + n + " 项"; });
-    registry.provide("tool:dbtest", async function () { return await dbTestReport(); });
-    log("数据库", "手动安装能力已注册（dbImport / dbImportUrl / dbTest / dbUninstall）");
-}
-
-const dbImport = { DB_FILES, dbKey, dbImportFromText, dbInstalled, dbUninstall, dbTestReport, dbPickAndInstall, dbImportFromUrl, registerDbImport };
-
-return { DB_FILES, dbKey, dbImportFromText, dbInstalled, dbUninstall, dbTestReport, dbPickAndInstall, dbImportFromUrl, registerDbImport, dbImport };
-});
-
 __def("src/data/deck.js", function (__req) {
 const { ctx, log } = __req("src/core/bus.js");
 const { registry } = __req("src/core/registry.js");
 const { getStatsIndex, getSetnames, normalizeKey } = __req("src/data/indexes.js");
+const { splitSetcodes, fieldNamesOf } = __req("src/data/setcodes.js");
 const { seededRandom, todayKey } = __req("src/data/collection.js");
 const { settings } = __req("src/core/settings.js");
 const { imageUrl } = __req("src/data/cards.js");
@@ -3847,6 +3840,10 @@ async function banlistProblems(merged, limits, region) {
     return out;
 }
 
+/** 区域显示名（面板「查询内容 → 禁限表区域」用哪块表就显示哪块） */
+function regionNameOf(region) {
+    return region === "ja" || region === "jp" ? "OCG 日文" : region === "en" ? "TCG 英文" : "官方简中";
+}
 function validateDeckText(deck, limits, region) {
     const base = deckProblems(deck, limits, region);
     const lines = ["📋 卡组校验", "主卡组 " + base.main + " 张 / 额外 " + base.extra + " 张 / 副卡组 " + base.side + " 张，合计 " + (base.main + base.extra + base.side) + " 张"];
@@ -3875,21 +3872,19 @@ function simulateHand(pool, draw, runs, random) {
     return results;
 }
 
-/** 系列/字段检索：名字命中 + setcode 解码命中 */
+/**
+ * 系列/字段检索：名字命中 + setcode 解码命中。
+ * ★ 必须是"整块命中"：以前写成"十进制文本里能切出这个码就算"，结果字段码 1（正义盟军）
+ *   会把 setcode=152、14549056… 这些卡全算成成员（实测 14281 张里命中 1828 张）。
+ */
 function decodeSetcodes(digits, codeSet) {
-    const s = String(digits || "").trim();
-    if (!s || !/^\d+$/.test(s)) return [];
-    const found = new Set();
-    const walk = function (pos) {
-        if (pos >= s.length) return true;
-        for (let len = Math.min(6, s.length - pos); len >= 1; len--) {
-            const chunk = s.slice(pos, pos + len);
-            if (codeSet.has(chunk)) { found.add(chunk); if (walk(pos + len)) return true; }
-        }
-        return false;
-    };
-    walk(0);
-    return [...found];
+    if (!codeSet || typeof codeSet.has !== "function") return [];
+    const found = [];
+    for (const code of splitSetcodes(digits)) {
+        const key = String(code);
+        if (codeSet.has(key) && found.indexOf(key) < 0) found.push(key);
+    }
+    return found;
 }
 
 /** 字段名 → 十进制 code 集合（setnames 键是十六进制） */
@@ -3956,7 +3951,15 @@ async function handText(args) {
 
 /** 4) 注册能力 */
 function registerDeck() {
-registry.provide("decodeSetcodes", async function (args) { return decodeSetcodes((args && args.codes) || args || []); });
+    // 对外能力：setcode（十进制或 0x 十六进制）→ 字段名数组（唯一调用方 cards.js 要的就是名字）
+    registry.provide("decodeSetcodes", async function (args) {
+        const raw = Array.isArray(args) ? args : ((args && (args.codes || args.setcode || args.query)) || []);
+        const list = Array.isArray(raw) ? raw : [raw];
+        const setnames = await getSetnames();
+        const names = [];
+        for (const item of list) for (const nm of fieldNamesOf(setnames, item)) if (names.indexOf(nm) < 0) names.push(nm);
+        return names;
+    });
     registry.provide("tool:deck", async function (args) {
         const picked = deckArgText(args);
         const deck = parseDeckText(picked.text);
@@ -3966,12 +3969,12 @@ registry.provide("decodeSetcodes", async function (args) { return decodeSetcodes
         let text = base.text;
         try {
             const limits = await getLimits();
-            const extra = await banlistProblems(base.base.merged, limits, "cn");
+            const extra = await banlistProblems(base.base.merged, limits, region);
             const unknown = extra.filter(function (x) { return x.indexOf("找不到") >= 0; });
             const real = extra.filter(function (x) { return x.indexOf("找不到") < 0; });
             if (real.length) text += "\n\n❌ 禁限问题 " + real.length + " 处：\n" + real.map(function (x) { return "· " + x; }).join("\n");
-            else text += "\n\n✅ 禁限表检查通过（官方简中）。";
-            if (unknown.length) text += "\n\n（另有 " + unknown.length + " 张在本地卡库没找到，已跳过：' + '' + '" + unknown.slice(0, 5).map(function (x) { return x.replace(/^「|」.*$/g, ""); }).join("、") + "）";
+            else text += "\n\n✅ 禁限表检查通过（" + (regionNameOf(region)) + "）。";
+            if (unknown.length) text += "\n\n（另有 " + unknown.length + " 张在本地卡库没找到，已跳过：" + unknown.slice(0, 5).map(function (x) { return x.replace(/^「|」.*$/g, ""); }).join("、") + "）";
         } catch (error) { text += "\n\n（禁限表不可用，本次只做了数量与同名检查）"; }
         return (picked.fromChat ? "（卡表来自聊天里的 <deck> 块）\n\n" : "") + text;
     });
@@ -3983,12 +3986,23 @@ registry.provide("decodeSetcodes", async function (args) { return decodeSetcodes
         if (a === "deck") return [];
         return [];
     });
+    // ★ 自然语言触发词「起手模拟 / 起手概率」：读聊天里的 <deck> 卡表（与 /ygohand 同一套逻辑）。
+    //   以前 hand 这个动作没有任何数据模块实现，触发词命中后同样什么都不注入。
+    registry.provide("runAction:hand", async function (trigger) {
+        if (!trigger || trigger.action !== "hand") return [];
+        const picked = deckArgText("");
+        const deck = parseDeckText(picked.text);
+        if (!deck.main.length) return [{ name: "起手模拟", text: "要模拟起手的话，先把卡组贴出来（每行「3 卡名」），或写成 <deck>…</deck> 块发一条消息。" }];
+        const arg = String(trigger.arg || "").trim();
+        const draw = /^d{1,3}$/.test(arg) ? Number(arg) : undefined;
+        return [{ name: "起手模拟", text: await handText({ deck: picked.text, draw: draw }) }];
+    });
     log("数据", "卡组能力已注册（deck/hand/series）");
 }
 
 const deckMod = { extractDeckBlock, deckFromChat, deckArgText, RULES, parseDeckText, deckSize, extraSize, sideSize, mergeByName, deckProblems, banlistProblems, validateDeckText, simulateHand, decodeSetcodes, seriesCodes, seriesMembers, seriesText, handText, registerDeck };
 
-return { RULES, extractDeckBlock, deckFromChat, deckArgText, parseDeckText, deckSize, extraSize, sideSize, mergeByName, deckProblems, banlistProblems, validateDeckText, simulateHand, decodeSetcodes, seriesCodes, seriesMembers, seriesText, handText, registerDeck, deckMod };
+return { RULES, extractDeckBlock, deckFromChat, deckArgText, parseDeckText, deckSize, extraSize, sideSize, mergeByName, deckProblems, banlistProblems, regionNameOf, validateDeckText, simulateHand, decodeSetcodes, seriesCodes, seriesMembers, seriesText, handText, registerDeck, deckMod };
 });
 
 __def("src/data/indexes.js", function (__req) {
@@ -4083,18 +4097,28 @@ const getNameIndex = lazyIndex(async function () { return parseNames(await readT
 const getStatsIndex = lazyIndex(async function () { return parseStats(await readText(FILES.stats)); });
 const getSetnames = lazyIndex(async function () { return parseSetnames(await readText(FILES.setnames)); });
 
+/** ★ 重置懒索引：手动安装/卸载卡库、清缓存之后调用，下一次查询就会重新读数据源。
+ *  没有它的时候：先在没库的状态下查过一次卡（索引被解析成空并缓存），装完库本会话仍然查不到，
+ *  必须刷新页面 —— 实测就是这个坑。 */
+function resetIndexes() {
+    try { getNameIndex.reset(); getStatsIndex.reset(); getSetnames.reset(); } catch (error) { /* 忽略 */ }
+    log("数据", "卡库索引已重置（下次查询重新读取数据源）");
+    return true;
+}
+
 /** 4) 注册能力（数据层对外只暴露这几个） */
 function registerIndexes() {
     registry.provide("index:names", getNameIndex);
     registry.provide("index:stats", getStatsIndex);
     registry.provide("index:setnames", getSetnames);
-    log("数据", "索引能力已注册（names/stats/setnames）");
+    registry.provide("index:reset", async function () { return resetIndexes(); });
+    log("数据", "索引能力已注册（names/stats/setnames/reset）");
 }
 
 /** 5) 导出 */
-const indexes = { FILES, configure, normalizeKey, parseNames, parseStats, parseSetnames, getNameIndex, getStatsIndex, getSetnames, registerIndexes };
+const indexes = { FILES, configure, normalizeKey, parseNames, parseStats, parseSetnames, getNameIndex, getStatsIndex, getSetnames, resetIndexes, registerIndexes };
 
-return { FILES, configure, normalizeKey, parseNames, parseStats, parseSetnames, getNameIndex, getStatsIndex, getSetnames, registerIndexes, indexes };
+return { FILES, configure, normalizeKey, parseNames, parseStats, parseSetnames, getNameIndex, getStatsIndex, getSetnames, resetIndexes, registerIndexes, indexes };
 });
 
 __def("src/data/packs.js", function (__req) {
@@ -4102,9 +4126,10 @@ const { log } = __req("src/core/bus.js");
 const { settings } = __req("src/core/settings.js");
 const { registry } = __req("src/core/registry.js");
 const { fetchJson, cached, lazyIndex } = __req("src/core/http.js");
-const { getStatsIndex, normalizeKey } = __req("src/data/indexes.js");
+const { getStatsIndex, getSetnames, normalizeKey } = __req("src/data/indexes.js");
 const { addToCollection } = __req("src/data/collection.js");
-const { findCard } = __req("src/data/cards.js");
+const { findCard, imageUrl, parseTypeText } = __req("src/data/cards.js");
+const { splitSetcodes, fieldNameOf } = __req("src/data/setcodes.js");
 
 /** ── 统一模板（数据模块）：常量 → 纯函数 → 懒索引 → register → exports ── */
 
@@ -4224,7 +4249,17 @@ function formatPackDraw(pack, cards) {
 
 /** 3) 懒索引 */
 const getReleaseRows = lazyIndex(async function () {
-    return await cached("releases", 12 * 3600 * 1000, async function () { return await doFetch(RELEASE_URL, 60000); });
+    // 只把"成功且非空"的结果写进缓存：否则一次断网会让卡包功能瘫 12 小时
+    try {
+        return await cached("releases", 12 * 3600 * 1000, async function () {
+            const rows = await doFetch(RELEASE_URL, 60000);
+            if (!Array.isArray(rows) || !rows.length) throw new Error("发售表为空");
+            return rows;
+        });
+    } catch (error) {
+        log("数据", "卡包发售表取不到（" + (error && error.message ? error.message : error) + "）：卡包功能暂时退化为按本地卡库随机抽卡");
+        return [];
+    }
 });
 const getPackIndex = lazyIndex(async function () {
     const rows = await getReleaseRows();
@@ -4240,7 +4275,7 @@ async function rowsToCards(ids) {
     for (const id of ids) {
         const row = stats.byId.get(String(id));
         if (!row) continue;
-        out.push({ id: row.id, cid: row.cid, name: row.name, typeText: row.typeText, image: "https://cdn.233.momobako.com/ygopro/pics/" + row.id + ".jpg" });
+        out.push({ id: row.id, cid: row.cid, name: row.name, typeText: row.typeText, image: imageUrl(row.id) });   // 9 位先行卡图源由 imageUrl 统一处理
     }
     return out;
 }
@@ -4248,6 +4283,7 @@ async function rowsToCards(ids) {
 /** 4) 业务文本（工具与命令共用） */
 async function openPackText(args) {
     const index = await getPackIndex();
+    if (args.pack && !index.length) return "卡包发售表取不到（要联网访问 ygocdb 的发售数据）：现在只能用「/ygodraw」按本地卡库随机抽卡，或稍后再试。";
     const region = args.region && REGIONS.indexOf(args.region) >= 0 ? args.region : (settings.get("packRegion") || "sc");   // 面板「玩法 → 卡包地区」
     const minSize = Math.max(1, Number(settings.get("packMinSize")) || 20);   // 面板「玩法 → 卡池下限」
     let pack = args.pack ? findPack(index, args.pack, args.region ? region : null) : null;
@@ -4321,14 +4357,73 @@ function diyLine(entry, index) {
     return "[" + (index + 1) + "] " + entry.name + "\n" + entry.typeText + (entry.image ? "\n![](" + entry.image + ")" : "\n（DIY 卡，没有卡图）");
 }
 
-async function drawText(args) {
+/**
+ * 抽卡池：把工具声明的筛选条件（kind/attribute/race/atk_min/archetype）真的用上。
+ * 以前 drawText 只读 count，模型按 schema 传 kind=魔法 attribute=光 也会拿回全库随机卡。
+ */
+async function drawPoolFor(args) {
+    const a = args || {};
     const stats = await getStatsIndex();
-    const pool = stats.rows.map(function (r) { return r.id; });
+    const kind = String(a.kind || "").trim();
+    const attribute = String(a.attribute || "").trim();
+    const race = String(a.race || "").trim();
+    const atkMin = Number(a.atk_min);
+    const archetype = String(a.archetype || "").trim();
+    const KIND_MATCH = { "怪兽": "[怪兽", "魔法": "[魔法", "陷阱": "[陷阱" };
+    let rows = stats.rows.slice();
+    if (kind && KIND_MATCH[kind]) rows = rows.filter(function (r) { return String(r.typeText || "").indexOf(KIND_MATCH[kind]) >= 0; });
+    if (attribute) rows = rows.filter(function (r) { return String(r.typeText || "").indexOf(attribute) >= 0; });
+    if (race) rows = rows.filter(function (r) { return String(r.typeText || "").indexOf(race) >= 0; });
+    if (Number.isFinite(atkMin) && atkMin > 0) rows = rows.filter(function (r) { const t = parseTypeText(r.typeText); return t.atk !== "" && !isNaN(Number(t.atk)) && Number(t.atk) >= atkMin; });
+    if (archetype) {
+        // 字段：名字/俗称命中 ∪ setcode 位域整块命中（与 cards.js / deck.js 同一套判定）
+        const setnames = await getSetnames();
+        const key = normalizeKey(archetype);
+        const wanted = new Set();
+        for (const [hex, raw] of setnames) {
+            const label = typeof raw === "string" ? raw : String((raw && (raw.cn || raw.sc || raw.jp)) || "");
+            const nk = normalizeKey(label);
+            if (!nk) continue;
+            if (nk === key || nk.indexOf(key) >= 0 || key.indexOf(nk) >= 0) wanted.add(parseInt(hex, 16));
+        }
+        const byName = rows.filter(function (r) { return normalizeKey(r.name).indexOf(key) >= 0 || (r.aliases || []).some(function (x) { return normalizeKey(x).indexOf(key) >= 0; }); });
+        const byCode = wanted.size ? rows.filter(function (r) { return splitSetcodes(r.setcode).some(function (c) { return wanted.has(c); }); }) : [];
+        const map = new Map();
+        for (const r of byName) map.set(r.id, r);
+        for (const r of byCode) map.set(r.id, r);
+        rows = Array.from(map.values());
+    }
+    const pool = rows.map(function (r) { return r.id; });
     const diy = diyPoolEntries();
-    for (const d of diy) pool.push(d.id);        // DIY 卡也进抽卡池
-    const picked = drawFromPool(poolInPlay(pool, stats), Number(args.count) || 2, rng);
+    for (const d of diy) {
+        const t = String(d.typeText || "");
+        if (kind && KIND_MATCH[kind] && t.indexOf(KIND_MATCH[kind]) < 0) continue;
+        if (attribute && t.indexOf(attribute) < 0) continue;
+        if (race && t.indexOf(race) < 0) continue;
+        pool.push(d.id);
+    }
+    return { pool: poolInPlay(pool, stats), diy: diy, matched: rows.length, filters: { kind: kind, attribute: attribute, race: race, atkMin: Number.isFinite(atkMin) ? atkMin : 0, archetype: archetype } };
+}
+/** 筛选条件 → 一行人类可读文本（结果里明示用了哪些条件，不再"静默忽略"） */
+function describeFilters(f) {
+    const parts = [];
+    if (f.kind) parts.push("类型=" + f.kind);
+    if (f.attribute) parts.push("属性=" + f.attribute);
+    if (f.race) parts.push("种族=" + f.race);
+    if (f.atkMin) parts.push("攻击≥" + f.atkMin);
+    if (f.archetype) parts.push("字段/系列=" + f.archetype);
+    return parts.length ? parts.join(" · ") : "";
+}
+
+async function drawText(args) {
+    const a = args || {};
+    const stats = await getStatsIndex();
+    const info = await drawPoolFor(a);
+    const filters = describeFilters(info.filters);
+    if (!info.pool.length) return "🎲 没有符合条件的卡（" + (filters || "卡池为空") + "）。放宽条件再试，或用 search_yugioh_cards 先查名字。";
+    const picked = drawFromPool(info.pool, Number(a.count) || 2, rng);
     try { addToCollection(picked); } catch (error) { /* 卡册记录失败不影响抽卡 */ }
-    const diyMap = new Map(diy.map(function (d) { return [d.id, d]; }));
+    const diyMap = new Map(info.diy.map(function (d) { return [d.id, d]; }));
     const rows = [];
     const realIds = picked.filter(function (id) { return !diyMap.has(String(id)); });
     const realCards = await rowsToCards(realIds);
@@ -4337,7 +4432,8 @@ async function drawText(args) {
         const d = diyMap.get(String(id));
         rows.push(d ? diyLine(d, rows.length) : (function () { const c = realCards[ri++]; return c ? "[" + rows.length + "] " + c.name + "\n" + c.typeText + "\n![](" + c.image + ")" : ""; })());
     }
-    return "🎲 随机抽卡（卡库共 " + stats.rows.length + " 张" + (diy.length ? " + DIY " + diy.length + " 张" : "") + "）\n" + rows.filter(Boolean).join("\n\n");
+    return "🎲 随机抽卡（卡库共 " + stats.rows.length + " 张" + (info.diy.length ? " + DIY " + info.diy.length + " 张" : "")
+        + (filters ? "；筛选：" + filters + " → 符合 " + info.matched + " 张" : "") + "）\n" + rows.filter(Boolean).join("\n\n");
 }
 
 /** 触发词派发（拦截器用 runAction） */
@@ -4404,7 +4500,7 @@ async function releaseDateOf(id) {
 }
 const packs = { isRareDraw, releaseDateOf, RELEASE_URL, REGIONS, REGION_LABEL, configure, buildPackIndex, listPacks, findPack, drawFromPool, formatPackDraw, getReleaseRows, getPackIndex, openPackText, listPacksText, searchPacksText, drawText, runAction, registerPacks };
 
-return { RELEASE_URL, REGIONS, REGION_LABEL, configure, buildPackIndex, listPacks, findPack, POOL_SWITCHES, poolExcludes, poolInPlay, packCount, drawFromPool, isRareDraw, formatPackDraw, getReleaseRows, getPackIndex, openPackText, listPacksText, searchPacksText, diyPoolEntries, drawText, runAction, registerPacks, releaseDateOf, packs };
+return { RELEASE_URL, REGIONS, REGION_LABEL, configure, buildPackIndex, listPacks, findPack, POOL_SWITCHES, poolExcludes, poolInPlay, packCount, drawFromPool, isRareDraw, formatPackDraw, getReleaseRows, getPackIndex, openPackText, listPacksText, searchPacksText, diyPoolEntries, drawPoolFor, describeFilters, drawText, runAction, registerPacks, releaseDateOf, packs };
 });
 
 __def("src/data/rules.js", function (__req) {
@@ -4430,6 +4526,11 @@ function doFetch(url, ms) { return fetchImpl ? fetchImpl(url, ms) : fetchJson(ur
 
 /** 2) 纯函数 */
 /** 解析禁限表：键是 CID（不是 8 位密码），这一条已用线上数据核对过 */
+/** 接口取不到时的空表（形状与 parseLimits 一致）——让调用方走"未取到"分支，而不是让整个能力抛异常 */
+function emptyLimits() {
+    const one = function () { return { date: "", forbidden: new Set(), limited: new Set(), semi: new Set(), names: { forbidden: {}, limited: {}, semi: {} } }; };
+    return { cn: one(), ja: one(), en: one() };
+}
 function parseLimits(json) {
     const data = typeof json === "string" ? JSON.parse(json) : (json || {});
     const out = {};
@@ -4698,14 +4799,22 @@ async function crossRulingText(args) {
 }
 
 /** 3) 懒索引 */
-const getLimits = lazyIndex(async function () { return parseLimits(await doFetch(LIMITS_URL, 20000)); });
+const getLimits = lazyIndex(async function () {
+    // 以前这里直接 await doFetch：断网/接口挂了就抛出去，/ygodeck 与禁限查询整个报错。
+    // 现在退化成空表（"未能获取禁限卡表"），其它本地判定照常。
+    try { return parseLimits(await doFetch(LIMITS_URL, 20000)); }
+    catch (error) {
+        log("数据", "禁限表取不到（" + (error && error.message ? error.message : error) + "）：禁限相关判定暂时不可用");
+        return emptyLimits();
+    }
+});
 
 /** 4) 注册能力 */
 /** 触发词派发（与 packs.runAction 合并注册；同一个 key 后注册者覆盖前者，因此集中在这里做总派发） */
 async function runAction(trigger) {
     const action = trigger && trigger.action;
     const arg = (trigger && trigger.arg) || "";
-    if (action === "banlist") return [{ name: arg ? "禁限状态" : "禁限卡表", text: await banlistText("cn", arg) }];
+    if (action === "banlist") return [{ name: arg ? "禁限状态" : "禁限卡表", text: await banlistText(settings.get("banlistRegion") || "cn", arg) }];
     if (action === "rule") {
         if (!arg) return [];
         const text = await rulingText({ query: arg, limit: 3 });
@@ -4739,7 +4848,91 @@ registry.provide("tool:banlist", async function (args) { return await banlistTex
 
 const rules = { KEYWORD_MAX, crossRulingText, renderCrossRulings, checkSummonDelegated: true, banlistStatusOf, stripHtml, faqList, LIMITS_URL, CARD_DETAIL_URL, REGIONS, REGION_LABEL, STATUS_TEXT, configure, parseLimits, banlistStatus, tributeNeeded, summonText, banlistText, rulingText, getLimits, registerRules };
 
-return { LIMITS_URL, CARD_DETAIL_URL, REGIONS, REGION_LABEL, STATUS_TEXT, configure, parseLimits, banlistStatus, tributeNeeded, summonText, banlistText, KEYWORD_MAX, stripHtml, faqList, rulingText, renderCrossRulings, crossRulingText, getLimits, runAction, banlistStatusOf, registerRules, rules };
+return { LIMITS_URL, CARD_DETAIL_URL, REGIONS, REGION_LABEL, STATUS_TEXT, configure, emptyLimits, parseLimits, banlistStatus, tributeNeeded, summonText, banlistText, KEYWORD_MAX, stripHtml, faqList, rulingText, renderCrossRulings, crossRulingText, getLimits, runAction, banlistStatusOf, registerRules, rules };
+});
+
+__def("src/data/setcodes.js", function (__req) {
+const { getSetnames } = __req("src/data/indexes.js");
+
+/**
+ * setcode（字段位域）工具 —— 纯函数集中在这里，别再让 cards / deck / packs 互相 import 成环。
+ *
+ * 规则（与现实数据核对过）：
+ *   · card-stats.tsv 的 setcode 是十进制文本，值本身是【位域】：每 16 位一个字段码
+ *     （例：被封印的艾克佐迪亚 14549056 = 0xDE0040 → 0x40「被封印」+ 0xDE「艾克佐迪亚」）
+ *   · setnames.json 的键是【不带 0x 的小写十六进制】（例："dd" = 青眼），不是十进制
+ *   · 有些卡 setcode 超过 2^53（如 36592129229979790），所以用 BigInt 拆，别用 Number + &
+ */
+
+/** 十进制/十六进制文本 → 16 位字段码数组（低位在前，去重；解析不了返回 []） */
+function splitSetcodes(raw) {
+    const s = String(raw === undefined || raw === null ? "" : raw).trim();
+    if (!s) return [];
+    const out = [];
+    // 接口偶尔给 "0x40,0xde" 这种逗号列表，本地 tsv 给单个十进制位域 —— 两种都要吃
+    for (const piece of s.split(/[,\s]+/).filter(Boolean)) {
+        let n = null;
+        try { n = /^0x/i.test(piece) ? BigInt(piece) : (/^\d+$/.test(piece) ? BigInt(piece) : null); } catch (error) { n = null; }
+        if (n === null) continue;
+        while (n > 0n) {
+            const code = Number(n & 0xffffn);
+            if (code > 0 && out.indexOf(code) < 0) out.push(code);
+            n = n >> 16n;
+        }
+    }
+    return out;
+}
+
+/** 单个字段码 → 字段名（接受数字或 "0x…"/十六进制串）；查不到返回 "" */
+function fieldNameOf(setnames, code) {
+    if (!setnames || typeof setnames.get !== "function") return "";
+    const n = typeof code === "number" ? code : parseInt(String(code).replace(/^0x/i, ""), 16);
+    if (!Number.isFinite(n) || n <= 0) return "";
+    const hex = Math.floor(n).toString(16);
+    const hit = setnames.get(hex) || setnames.get("0x" + hex);
+    if (!hit) return "";
+    if (typeof hit === "string") return hit;
+    return String(hit.cn || hit.sc || hit.jp || hit.en || "");
+}
+
+/** 位域文本 → 该卡的全部字段名（去重，低位字段在前）；查不到返回 [] */
+function fieldNamesOf(setnames, raw) {
+    const out = [];
+    for (const code of splitSetcodes(raw)) {
+        const name = fieldNameOf(setnames, code);
+        if (name && out.indexOf(name) < 0) out.push(name);
+    }
+    return out;
+}
+
+/** 位域文本 → 该卡的全部字段名（含日文名，供"字段: 青眼（青眼の白龍）"用） */
+function fieldNamesWithJpOf(setnames, raw) {
+    const cn = [];
+    const jp = [];
+    for (const code of splitSetcodes(raw)) {
+        const hit = (function () {
+            if (!setnames || typeof setnames.get !== "function") return null;
+            const hex = code.toString(16);
+            return setnames.get(hex) || setnames.get("0x" + hex) || null;
+        })();
+        if (!hit) continue;
+        const nm = typeof hit === "string" ? hit : String(hit.cn || hit.sc || hit.en || "");
+        const j = typeof hit === "object" && hit ? String(hit.jp || "") : "";
+        if (nm && cn.indexOf(nm) < 0) cn.push(nm);
+        if (j && jp.indexOf(j) < 0) jp.push(j);
+    }
+    return { cn: cn, jp: jp };
+}
+
+/** 懒取字段表 + 位域文本 → 字段名（异步便捷入口） */
+async function fieldNamesForSetcode(raw) {
+    const setnames = await getSetnames();
+    return fieldNamesOf(setnames, raw);
+}
+
+const setcodes = { splitSetcodes, fieldNameOf, fieldNamesOf, fieldNamesWithJpOf, fieldNamesForSetcode };
+
+return { splitSetcodes, fieldNameOf, fieldNamesOf, fieldNamesWithJpOf, fieldNamesForSetcode, setcodes };
 });
 
 __def("src/data/summon.js", function (__req) {
@@ -4917,8 +5110,12 @@ async function checkSummon(args) {
     const a = args || {};
     const row = await findCard(a.query);
     if (!row) return "没有找到「" + String(a.query || "") + "」。";
-    const parsed = parseSummonMethod(String(a.method || ""));
-    const method = parsed ? parsed.key : "";
+    // 调用方给的可能是召唤方式的 key（xyz/tribute/…），parseSummonMethod 只认中文写法；
+    // 先按 key 精确匹配，再退回中文解析（否则工具/触发词传 key 时方法被丢掉，判成通常召唤还会落错盘）
+    const rawMethod = String(a.method || "").trim();
+    const direct = SUMMON_METHODS.filter(function (m) { return m.key === rawMethod.toLowerCase(); })[0];
+    const parsed = parseSummonMethod(rawMethod);
+    const method = direct ? direct.key : (parsed ? parsed.key : "");
     const judge = await judgeSummon(row, method, {});
     // 禁限提醒
     try {
@@ -4950,7 +5147,7 @@ function registerSummon() {
         if (!arg) return [{ name: "召唤检查", text: "要召唤哪张卡？例如「上级召唤青眼白龙」或「超量召唤 No.39 希望皇 霍普」。" }];
         const parsed = parseSummonMethod(arg);
         const query = parsed ? arg.replace(parsed.re, "").trim() : arg;
-        return [{ name: "召唤检查", text: await checkSummon({ query: query, method: parsed ? parsed.key : "" }) }];
+        return [{ name: "召唤检查", text: await checkSummon({ query: query || arg, method: parsed ? parsed.key : "" }) }];
     });
     registry.provide("tool:summonApply", async function (args) {
         const a = args || {};
@@ -5115,16 +5312,27 @@ function cleanMessageAt(index) {
     const m = chat[index];
     if (!m || typeof m.mes !== "string") return false;
     const cleaned = stripCitations(m.mes);
-    if (cleaned === m.mes) return false;
+    // ★ swipe 记录要一起改（v1 同款：ygo-card-lookup/index.js:3013）：只改 m.mes 的话，
+    //   点 ◀/▶ 切回旧 swipe 或从 swipes 重渲染，[^1] 又会冒出来。
+    let touchedSwipe = false;
+    if (Array.isArray(m.swipes) && typeof m.swipe_id === "number" && typeof m.swipes[m.swipe_id] === "string") {
+        const sw = stripCitations(m.swipes[m.swipe_id]);
+        if (sw !== m.swipes[m.swipe_id]) { m.swipes[m.swipe_id] = sw; touchedSwipe = true; }
+    }
+    if (cleaned === m.mes && !touchedSwipe) return false;
     m.mes = cleaned;
-    log("引用", "已清理第 " + index + " 楼的引用标记");
+    log("引用", "已清理第 " + index + " 楼的引用标记" + (touchedSwipe ? "（含 swipe 记录）" : ""));
     return true;
 }
 
 /** 清理最后一条角色消息（MESSAGE_RECEIVED 的常见用法） */
-function cleanLastMessage() {
+function cleanLastMessage(id) {
     const c = ctx();
     const chat = Array.isArray(c.chat) ? c.chat : [];
+    // MESSAGE_RECEIVED 给的就是刚进楼的那一条（宿主传的是 index）——给了就清它，
+    // 别再去"猜最后一条非玩家消息"（聊天里有系统/旁白楼时会清错人）
+    const idx = Number(id);
+    if (Number.isInteger(idx) && idx >= 0 && idx < chat.length) return cleanMessageAt(idx);
     for (let i = chat.length - 1; i >= 0; i--) {
         if (chat[i] && !chat[i].is_user) return cleanMessageAt(i);
     }
@@ -5181,7 +5389,8 @@ const TRIGGERS = [
     { action: "packsearch", words: ["有哪些卡包", "有没有卡包", "查卡包", "看看卡包", "看下卡包", "卡包列表"] },
 { action: "packsearch", re: /(?:(?:看看|查查|查一下|找找|有没有|有哪些|看|找|查)\s*)*([^，。！？\s]{2,12}?)\s*卡包/ },   // 「看看有没有白银城卡包」→ 白银城
     { action: "deck", words: ["卡组校验", "检查卡组"] },
-    { action: "hand", words: ["起手模拟", "起手概率"] , words: ["起手模拟", "抽取起手", "抽起手", "起手", "开始决斗"] },
+    // 两组合并：曾经写成重复的 words 键，后一组把前一组整个盖掉，「起手概率」这个触发词就没了
+    { action: "hand", words: ["起手模拟", "起手概率", "抽取起手", "抽起手", "起手", "开始决斗"] },
     { action: "summon", words: ["召唤检查", "能不能召唤"] },
     { action: "summon", re: /^(?:通常|上级|祭品|牲祭|升|仪式|融合|同调|同步|超量|多维|链接|连接|灵摆|特殊|特)?(?:召唤|特召)(?!师|阵|兽|物)\s*[:：]?\s*([^，。！？\n]{1,30})$/ },
     { action: "summon", re: /^(?:我)?(?:要|想|准备|打算)?(?:通常|上级|祭品|仪式|融合|同调|同步|超量|多维|链接|连接|灵摆|特殊)?(?:召唤)(?!师|阵|兽|物)\s*[:：]?\s*([^，。！？\n]{1,30})$/ },
@@ -5330,10 +5539,13 @@ const TRIGGER_LABELS = {
     recap: "本局卡表", series: "字段查询", selftest: "自检", card: "查卡", search: "模糊搜索",
 };
 /** 组装给外部模型的系统提示（有 external 模块就用它的 buildCardPrompt；否则退化为简易拼装） */
-function buildExternalSystem(conf, cards) {
+async function buildExternalSystem(conf, cards, question) {
     const instruction = conf.apiInstruction;
+    // 这里以前引用了不存在的 text（外层 interceptor 的局部变量）→ 参数求值就 ReferenceError，
+    // 被 catch 吞掉后永远退化成简易拼装，副 AI 拿不到玩家这句话。现在由调用方显式传进来，并且要 await。
     if (registry.has("external:prompt")) {
-        try { return registry.call("external:prompt", { cards: cards, question: String(text || "").slice(0, 800), instruction: instruction }); } catch (error) { /* 退化为下面 */ }
+        try { return await registry.call("external:prompt", { cards: cards, question: String(question || "").slice(0, 800), instruction: instruction }); }
+        catch (error) { log("外部", "组装外部系统提示失败，改用简易拼装：" + (error && error.message ? error.message : error)); }
     }
     const head = String(instruction || "").trim() || "你是游戏王规则助手，只用给定资料回答，不要编造。";
     const body = (cards || []).slice(0, 6).map(function (c) { return "· " + c.name + "：" + String(c.text || "").replace(/\n/g, " ").slice(0, 400); }).join("\n");
@@ -5403,13 +5615,17 @@ function createInterceptor() {
             cards = await runTrigger(trigger);
         }
         const freeGroupOn = settings.groupEnabled ? settings.groupEnabled("查询内容") !== false : true;
-        if ((!cards || !cards.length) && !trigger && freeGroupOn && conf.detectFreeText !== false && allowsFreeText() && registry.has("resolveCards")) {
-            kind = "freetext";
-            cards = await registry.call("resolveCards", text);
-        } else if (allowsFreeText() && registry.has("scanCards")) {
-            kind = "scan";
-            cards = await registry.call("scanCards", text);
+        // 触发词没产出资料时（某个动作还没有数据模块、或参数不全）也要退回自由文本识别，
+        // 否则「查卡 青眼白龙」这种把话说全的句子反而一个字都不注入。
+        if ((!cards || !cards.length) && freeGroupOn && conf.detectFreeText !== false && allowsFreeText() && registry.has("resolveCards")) {
+            const scanned = await registry.call("resolveCards", text);
+            if (scanned && scanned.length) {
+                kind = trigger ? (kind + "+freetext") : "freetext";
+                cards = scanned;
+            }
         }
+        // 这里原本还有一条 else-if 走 registry.call("scanCards")：全仓库没人 provide 它，
+        // 而且它的位置在触发词成功之后 —— 真注册了反而会把触发词的结果覆盖掉，已删除。
         // v1 的「用外部 AI 时停用插件自主搜索」：外部接口可用且该开关开着 → 本地检测/触发词全部跳过，直接把玩家输入交给外部 AI
     const externalReady = registry.has("external:ask") && settings.groupEnabled("外部接口") !== false && conf.apiEnabled !== false && String(conf.apiMode || "off") !== "off";
     const externalOnly = externalReady && conf.apiExternalAiOwnSearch !== false;
@@ -5429,7 +5645,7 @@ function createInterceptor() {
                     profileId: conf.apiProfile,
                     maxTokens: conf.apiMaxTokens,
                     timeoutMs: budget,
-                    system: buildExternalSystem(conf, cards),
+                    system: await buildExternalSystem(conf, cards, text),
                     user: text,
                 });
                 if (ext && ext.ok && ext.text) {
@@ -5480,7 +5696,7 @@ function createInterceptor() {
         const written = await registry.has("writeInjection") ? await registry.call("writeInjection", injection) : false;
         log("注入", cards.length + " 张卡 → " + injection.length + " 字（" + kind + "，" + (Date.now() - started) + "ms）写入=" + written);
         if (conf.logToast === true) {
-            try { const toaster = ctx().toastr; if (toaster && typeof toaster.info === "function") toaster.info("查卡器：已注入 " + cards.length + " 张卡资料"); } catch (error) { /* 忽略 */ }
+            try { const toaster = ctx().toastr || (typeof toastr !== "undefined" ? toastr : null); if (toaster && typeof toaster.info === "function") toaster.info("查卡器：已注入 " + cards.length + " 张卡资料"); } catch (error) { /* 忽略 */ }
         }
         emit("inject", { cards: cards.length, chars: injection.length, kind: kind, written: written });
         // 每次触发都给可见回执（v1 的行为）：标题写明触发路径，内容是被识别到的卡
@@ -6305,7 +6521,17 @@ function installBuyDelegate() {
 /** 3) 打开：统一走弹窗（受 resultPopup 开关控制） */
 async function showView(title, html) {
     const c = ctx();
-    if (settings.get("resultPopup") === false || !c || typeof c.callGenericPopup !== "function") { log("界面", "无法弹窗，已跳过 " + title); return false; }
+    if (settings.get("resultPopup") === false || !c || typeof c.callGenericPopup !== "function") {
+        // 面板「结果用弹窗面板显示」关掉时，以前这里直接 return false —— 收藏册/商店/决斗盘/本局卡表/查卡/两个编辑器
+        // 全都变成"按了没反应"。现在退回文本：走按钮的 toast/日志通道，用户至少能看到内容。
+        const plain = String(html || "")
+            .replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<script[\s\S]*?<\/script>/gi, " ")
+            .replace(/<br\s*\/?>/gi, "\n").replace(/<\/[^>]+>/g, " ").replace(/<[^>]*>/g, " ")
+            .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+            .replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+        log("界面", "未弹窗（" + title + "）：" + plain.slice(0, 200));
+        return plain ? (title + "：\n" + plain.slice(0, 4000)) : false;
+    }
     const types = c.POPUP_TYPE || {};
     try {
         await c.callGenericPopup(html, types.TEXT === undefined ? 1 : types.TEXT, "", { wide: true, large: true, allowVerticalScrolling: true, okButton: "关闭" });
@@ -6336,6 +6562,7 @@ return { ZONE_LABEL, GRID_CLASS, collectionHtml, shopHtml, boardHtml, recapHtml,
 
 __def("src/ui/panel.js", function (__req) {
 const { ctx, log, emit } = __req("src/core/bus.js");
+const { registry } = __req("src/core/registry.js");
 const { settings, DEFAULTS } = __req("src/core/settings.js");
 const { ownBase } = __req("src/core/http.js");
 
@@ -6365,6 +6592,7 @@ const FIELDS = [
     { group: "提示词", type: "select", key: "injectPosition", label: "注入位置", options: [["chat", "聊天内（可设深度，推荐）"], ["before", "主提示词之前"], ["after", "主提示词之后"]] },
     { group: "提示词", type: "number", key: "injectDepth", label: "聊天内注入深度（0=最后一条之后）", min: 0, max: 20 },
     { group: "提示词", type: "check", key: "skipQuiet", label: "摘要等 quiet 生成不注入" },
+    { group: "提示词", type: "check", key: "injectionFallback", label: "拦截器不生效时用事件兜底注入", hint: "宿主不支持 generate_interceptor 时（桌面客户端常见），在消息发送前用同一个拦截器补一次注入。" },
     { group: "提示词", type: "textarea", key: "injectNote", label: "附加处理要求（留空不加）" },
     { group: "提示词", type: "select", key: "injectNotePosition", label: "注入附注的位置", hint: "tail＝跟在卡片资料之后（默认，适合「这段资料怎么用」）；head＝放在整块最前面（适合「全局设定/风格/立场」类文本，AI 更容易当成总纲）。", options: [["tail", "tail — 跟在卡片资料后（默认）"], ["head", "head — 放在整块最前"]] },
     { group: "提示词", type: "note", label: "「注入附注」里的文字会原样进入发给 AI 的提示词（预算不足时优先保留它，不会先被截断）。" },
@@ -6399,7 +6627,10 @@ const FIELDS = [
     { group: "玩法", type: "check", key: "summonAutoApply", label: "召唤检查通过时自动上盘", hint: "勾上后：检查合法就自动执行（祭品/素材送墓、怪兽上场、用掉本回合通招），并把结果写进盘面。关掉则只判定不动盘面。" },
     { group: "玩法", type: "check", key: "shopIncludeDiy", label: "DIY 卡也进商店 / 卡库抽卡", hint: "勾上（默认）：每日商店与随机抽卡会把你的 DIY 卡混进池子；关掉只用真实卡库。" },
     { group: "查询内容", type: "number", key: "maxResults", label: "搜索结果上限", hint: "模糊搜索最多返回几条（1-50，默认 5）。", min: 1, max: 50 },
+    { group: "玩法", type: "select", key: "packRegion", label: "开卡包地区", hint: "按哪个地区的卡池开包（sc＝官方简中 / jp＝OCG 日文 / en＝TCG 英文）。", options: [["sc", "官方简中（sc）"], ["jp", "OCG 日文（jp）"], ["en", "TCG 英文（en）"]] },
     { group: "玩法", type: "number", key: "packSize", label: "每包抽几张", hint: "开卡包/随机抽卡每次抽几张（1-20，默认 5）。", min: 1, max: 20 },
+    { group: "玩法", type: "number", key: "shopSize", label: "每日商店件数", hint: "每天上架几件（1-20，默认 5）。", min: 1, max: 20 },
+    { group: "玩法", type: "number", key: "handDraw", label: "起手模拟张数", hint: "起手模拟默认抽几张（1-20，默认 5）。", min: 1, max: 20 },
     { group: "玩法", type: "number", key: "packMinSize", label: "卡池下限（几张以下不当作卡包）", hint: "卡池太小的包会被跳过（1-300，默认 20）。", min: 1, max: 300 },
     { group: "玩法", type: "number", key: "handRuns", label: "起手模拟次数", hint: "起手模拟默认跑几次（1-200，默认 1）。", min: 1, max: 200 },
     { group: "玩法", type: "button", key: "deckValidate", label: "校验聊天里的卡组", action: "deckValidate" },
@@ -6413,7 +6644,6 @@ const FIELDS = [
     { group: "玩法", type: "button", key: "diyList", label: "我的 DIY 卡（图形列表）", action: "diyList" },
     { group: "玩法", type: "select", key: "diyFrameMode", label: "DIY 卡面渲染方式", hint: "css＝自绘卡面（默认，永远可用）；real＝真实卡框 PNG（素材已内置；某张加载失败会自动回退 css）。", options: [["css", "自绘卡面（css）"], ["real", "真实卡框 PNG（real）"]] },
     { group: "玩法", type: "button", key: "diyCheckAssets", label: "检查卡框素材", action: "diyCheckAssets" },
-    { group: "玩法", type: "select", key: "diyFrameMode", label: "DIY 卡框模式", options: ["real", "css"], optionLabels: ["真卡框（素材）", "自绘（简版）"], hint: "real＝用 assets/yugioh 的真卡框；css＝简版自绘" },
     { group: "联动", type: "check", key: "vrmReaction", label: "抽到稀有卡时让 VRM 角色做表情（需装 VRM 扩展）" },
     { group: "联动", type: "check", key: "webSearchFallback", label: "本地查不到时用网络搜索（需装 Web Search 扩展）" },
     { group: "日志", type: "check", key: "logVerbose", label: "详细日志" },
@@ -6424,10 +6654,6 @@ const FIELDS = [
     { group: "查看", type: "button", key: "viewBoard", label: "⚔️ 决斗盘", action: "viewBoard" },
     { group: "查看", type: "button", key: "viewRecap", label: "📜 本局卡表", action: "viewRecap" },
     { group: "维护", type: "button", key: "clearCache", label: "清空缓存（含持久缓存）", action: "clearCache" },
-    { group: "维护", type: "button", key: "dbImport", label: "📥 安装数据库（手动选文件）", action: "dbImport", hint: "v1 模式：把 卡名索引/卡表/字段表/异画索引 装进 IndexedDB，装了就不依赖 data/ 目录。" },
-    { group: "维护", type: "button", key: "dbImportUrl", label: "🔗 从 URL 安装数据库", action: "dbImportUrl", hint: "给一个目录地址（以 / 结尾）或单个文件地址。" },
-    { group: "维护", type: "button", key: "dbTest", label: "🧪 测试数据库", action: "dbTest", hint: "报告 4 个库各读到多少、来源是手动安装还是随包文件，并真查一张卡。" },
-    { group: "维护", type: "button", key: "dbUninstall", label: "🗑 卸载手动安装的数据库", action: "dbUninstall", hint: "清掉 IndexedDB 里手动装的那份，回到随包 data/。" },
     { group: "维护", type: "button", key: "cacheInfo", label: "查看缓存状态", action: "cacheInfo" },
     { group: "日志", type: "check", key: "logEnabled", label: "启用日志" },
     { group: "日志", type: "check", key: "logToast", label: "注入时弹提示", hint: "每次自动注入都会弹一个小提示，便于确认是否生效。" },
@@ -7064,26 +7290,26 @@ const { registerRules } = __req("src/data/rules.js");
 const { registerSummon } = __req("src/data/summon.js");
 const { registerExternal, listProfiles: listExternalProfileList } = __req("src/api/external.js");
 const { registerPublicApi, installPublicApi } = __req("src/api/public-api.js");
-const { ownBase, clearAllCache } = __req("src/core/http.js");
+const { ownBase, captureSelfBase, clearAllCache } = __req("src/core/http.js");
 var indexes = __req("src/data/indexes.js");
 const { registerPacks } = __req("src/data/packs.js");
 const { registerCollection } = __req("src/data/collection.js");
-const { registerDbImport, dbPickAndInstall, dbImportFromUrl, dbTestReport, dbUninstall } = __req("src/data/dbimport.js");
 const { registerDeck } = __req("src/data/deck.js");
 const { registerBoard } = __req("src/data/board.js");
 const { registerArt } = __req("src/data/art.js");
 
 const { registerWriter, clearInjection } = __req("src/inject/writer.js");
+const { registerSendBox } = __req("src/ui/sendbox.js");
 const { registerCleanup, cleanLastMessage } = __req("src/inject/cleanup.js");
 const { registerSendBody } = __req("src/inject/sendbody.js");
-const { createInterceptor } = __req("src/inject/interceptor.js");
+const { createInterceptor, registerInterceptorHooks } = __req("src/inject/interceptor.js");
 
-const { mountPanel } = __req("src/ui/panel.js");
+const { mountPanel, registerStrictnessAction, registryProblems } = __req("src/ui/panel.js");
 const { configure: configurePanel, refreshDynamicSelects } = __req("src/ui/panel.js");
 const { registerResult } = __req("src/ui/result.js");
 const { registerPromptEditor } = __req("src/ui/prompt.js");
 const { registerDiyUi, openDiyEditor, diyCardHtml, installFrameFallback } = __req("src/ui/diy.js");
-const { registerGameUi, openCollection, openShop, openBoard, openRecap, openCard, openCardInput } = __req("src/ui/game.js");
+const { registerGameUi, openCollection, openShop, openBoard, openRecap, openCard, openCardInput, installBuyDelegate } = __req("src/ui/game.js");
 
 const { registerTools } = __req("src/api/tools.js");
 const { registerCommands } = __req("src/api/commands.js");
@@ -7092,6 +7318,10 @@ const { registerSelfTest } = __req("src/api/selftest.js");
 const { registerDeckImage } = __req("src/api/deckimage.js");
 
 const MODULE_VERSION = "0.2.0";
+
+// ★ 必须在"脚本求值这一刻"记录自身目录：之后 document.currentScript 就变回 null 了。
+//   这样无论仓库/文件夹叫什么名字，data/ 与 assets/ 都能定位到（GitHub 安装时目录名 = 仓库名）。
+captureSelfBase();
 
 /**
  * 磁盘探针（诊断用）：把关键阶段写进 extensionSettings 的一个独立键，
@@ -7175,11 +7405,12 @@ const PANEL_ACTIONS = {
         return "共 " + list.length + " 张 DIY 卡：" + list.map(function (x) { return x.name; }).join("、");
     },
     selftest: async function () { return await registry.call("cmd:selftest", {}); },
-    dbImport: async function () { return await dbPickAndInstall(); },
-    dbImportUrl: async function () { const c = (typeof SillyTavern !== "undefined" && SillyTavern.getContext) ? SillyTavern.getContext() : null; let url = ""; try { if (c && c.callGenericPopup) url = String(await c.callGenericPopup("", 3, "", { okButton: "安装", cancelButton: "取消" }) || ""); } catch (error) { /* 忽略 */ } if (!url) return "（已取消：没填 URL）"; return await dbImportFromUrl({ url: String(url).trim() }); },
-    dbTest: async function () { return await dbTestReport(); },
-    dbUninstall: async function () { return await dbUninstall(); },
-    clearCache: async function () { const ok = await clearAllCache(); return ok ? "✅ 缓存已清空（内存 + 持久）" : "内存缓存已清空；当前环境没有 IndexedDB，没有持久缓存可清。"; },
+    clearCache: async function () {
+        const ok = await clearAllCache();
+        // 索引也要一起重建，否则"清完缓存还是旧的"（懒索引只在进程内缓存）
+        try { if (registry.has("index:reset")) await registry.call("index:reset"); } catch (error) { /* 忽略 */ }
+        return ok ? "✅ 缓存已清空（内存 + 持久；手动安装的数据库保留）" : "内存缓存已清空；当前环境没有 IndexedDB，没有持久缓存可清。";
+    },
     cacheInfo: async function () {
         const caps = await registry.call("external:capability");
         const hasIdb = (function () { try { return typeof indexedDB !== "undefined" && !!indexedDB; } catch (error) { return false; } })();
@@ -7224,7 +7455,8 @@ async function step(name, fn) {
 const REQUIRED_CAPS = [
     "tool:card", "tool:pack", "tool:board", "ui:result", "ui:prompt", "writeInjection",
     "resolveCards", "runAction", "index:limits", "checkSummon", "external:ask", "external:test",
-    "external:models", "ui:diy", "ui:sendbox", "sendbody:on", "sendbody:handle", "boardText", "cleanupLastMessage",
+    "external:models", "ui:diy", "ui:sendbox", "ui:buy", "sendbody:on", "sendbody:handle", "boardText", "cleanupLastMessage",
+    "injectFallback:run", "strictness:get", "tool:deckimage", "collection:state", "decodeSetcodes",
 ];
 
 async function boot() {
@@ -7244,35 +7476,55 @@ async function boot() {
     report.push(await step("数据层", async function () {
         registerIndexes(); registerCards(); registerCardResolver(); registerRules(); registerSummon(); registerExternal();
         registerPublicApi();
-        registerPacks(); registerCollection(); registerDeck(); registerBoard(); registerArt(); registerDbImport();
+        registerPacks(); registerCollection(); registerDeck(); registerBoard(); registerArt();
     }));
     // ── 注入层
     report.push(await step("注入层", async function () {
         registerWriter();
         registerCleanup();
         registerSendBody();
+        registerInterceptorHooks();   // ★ 注册 injectFallback:run：宿主不调 generate_interceptor 时靠它兜底
         const interceptor = createInterceptor();
         interceptor.clearInjection = clearInjection;
         globalThis[INTERCEPTOR_NAME] = interceptor;
     }));
     // ── 界面层（无 DOM 时应优雅跳过，不抛错）
     report.push(await step("界面层", async function () {
-        registerResult(); registerPromptEditor(); registerDiyUi(); registerGameUi();
-        try { panel.registerStrictnessAction(); } catch (error) { /* 面板模块没加载就算了 */ }
+        registerResult(); registerPromptEditor(); registerDiyUi(); registerGameUi(); registerSendBox();
+        installBuyDelegate();   // ★ 商店「购买」按钮的点击委派（不装就点了没反应）
+        try { registerStrictnessAction(); } catch (error) { log("启动", "严格程度动作注册失败：" + (error && error.message ? error.message : error)); }
         installFrameFallback();
         try { configurePanel({ listExternalProfiles: function () { return listExternalProfileList(); }, getApiModels: function () { return settings.get("apiModels") || []; } }); } catch (error) { /* 面板可选 */ }
         applyIsolation();
         on("settings", function () { applyIsolation(); });
-        return await mountPanel(PANEL_ACTIONS);
+        // 面板字段注册表自检（重复 key / 非法类型 / 缺 options 都能在这里暴露）
+        try {
+            const problems = registryProblems();
+            if (problems.length) log("面板", "⚠️ 字段注册表有问题 " + problems.length + " 条：" + problems.slice(0, 6).join("；"));
+        } catch (error) { log("面板", "字段注册表自检失败：" + (error && error.message ? error.message : error)); }
+        // ★ 不再 await：宿主设置抽屉晚出现时，等待最坏要 10 秒，会把接口层/事件层一起拖住
+        panelMount = mountPanel(PANEL_ACTIONS).then(function (mounted) {
+            log("面板", mounted ? "挂载完成" : "暂未找到设置抽屉宿主，稍后打开设置时会自动重试");
+            return mounted;
+        }).catch(function (error) {
+            log("面板", "挂载异常（不影响命令与工具）：" + (error && error.message ? error.message : error));
+            return false;
+        });
+        return true;
     }));
     // ── 接口层
     report.push(await step("接口层", async function () {
-        registerTools(); registerCommands(); registerIntegrations(); registerSelfTest(); registerDeckImage();
+        registerTools(); registerCommands(); registerIntegrations(); registerDeckImage();
+        registerSelfTest({ requiredCaps: function () { return REQUIRED_CAPS.filter(function (cap) { return !registry.has(cap); }); } });
     }));
     // ── 事件层
     report.push(await step("事件层", async function () {
         return mountEvents({
-            onReady: function () { log("启动", "APP_READY"); },
+            onReady: function () {
+                log("启动", "APP_READY");
+                // 再挂一次（幂等）：有些宿主会在页面初始化更晚的时候重建 globalThis 上的对象
+                try { installPublicApi(); } catch (error) { log("启动", "对外接口补挂失败：" + (error && error.message ? error.message : error)); }
+            },
             onChatChanged: function () { clearInjection(); log("启动", "切换聊天：已清空注入"); },
             // ★ 兜底通道（v1 同款）：桌面客户端既不调 generate_interceptor、也不触发 PROMPT_READY，
             //   只有 GENERATION_AFTER_COMMANDS 在"提示词组装前"触发 —— 资料在这里追加才真的进本次发送。
@@ -7295,7 +7547,7 @@ async function boot() {
                     }
                 } catch (error) { log("兜底", "兜底通道异常（不影响生成）：" + (error && error.message ? error.message : error)); }
             },
-            onMessageReceived: function () { try { cleanLastMessage(); } catch (error) { /* 清理失败不影响消息 */ } },
+            onMessageReceived: function (id) { try { cleanLastMessage(id); } catch (error) { /* 清理失败不影响消息 */ } },
             // 兜底注入：宿主没调拦截器（例如不支持 generate_interceptor）时，玩家消息入楼后补一次
             onMessageSentFallback: async function () {
                 try {
@@ -7307,16 +7559,26 @@ async function boot() {
             },
         });
     }));
+    // ── 对外接口：必须等"同步装配"全部结束之后再挂。
+    //    打包产物在入口模块返回之后才执行 globalThis.YgoCardLookupV2 = __entry，
+    //    而数据层那一段是纯同步的 —— 在那里装的话会被这一行整个覆盖掉（实测踩过）。
+    report.push(await step("对外接口", async function () { installPublicApi(); return true; }));
     const failed = report.filter(function (r) { return !r.ok; });
-    log("启动", "装配完成：能力 " + registry.list().length + " 项" + (failed.length ? "，失败层：" + failed.map(function (r) { return r.name; }).join("、") : "，全部成功"));probe("booted", {
+    // ★ REQUIRED_CAPS 校验（以前只声明不校验，能力缺失永远看不出来）
+    for (const cap of REQUIRED_CAPS) { if (!registry.has(cap)) missingCaps.push(cap); }
+    log("启动", "装配完成：能力 " + registry.list().length + " 项" + (failed.length ? "，失败层：" + failed.map(function (r) { return r.name; }).join("、") : "，全部成功"));
+    if (missingCaps.length) log("启动", "⚠️ 缺少必需能力 " + missingCaps.length + " 项：" + missingCaps.join("、"));
+    probe("booted", {
         ok: failed.length === 0,
         capabilities: registry.list().length,
         layers: report.map(function (r) { return r.name + ":" + (r.ok ? "ok" : "fail"); }),
+        missingCaps: missingCaps,
         interceptor: typeof globalThis[INTERCEPTOR_NAME] === "function",
         domHost: (function () { try { return !!(document.getElementById("extensions_settings2") || document.getElementById("extensions_settings")); } catch (e) { return false; } })(),
         panelMounted: (function () { try { return !!document.getElementById("ygo2_settings"); } catch (e) { return false; } })(),
+        base: (function () { try { return ownBase(); } catch (e) { return "?"; } })(),
     });
-    return { ok: failed.length === 0, report: report, capabilities: registry.list().length, interceptor: typeof globalThis[INTERCEPTOR_NAME] === "function" };
+    return { ok: failed.length === 0 && missingCaps.length === 0, report: report, capabilities: registry.list().length, missingCaps: missingCaps, interceptor: typeof globalThis[INTERCEPTOR_NAME] === "function" };
 }
 
 
@@ -7325,6 +7587,9 @@ async function boot() {
  * 两套入口共用同一个单次启动守卫，避免重复装配（tt 若两者都触发，第二次会直接返回上次结果）。
  */
 let bootPromise = null;
+/** 面板挂载是异步的（不阻塞启动）；这里留个句柄供诊断/测试 await */
+let panelMount = null;
+function whenPanelMounted() { return panelMount || Promise.resolve(false); }
 function ygo2Activate() { return ensureBoot(); }
 function ensureBoot() {
     if (!bootPromise) bootPromise = boot().catch(function (error) { console.error("[YGO2] 启动失败", error); bootPromise = null; throw error; });
@@ -7341,10 +7606,10 @@ if (typeof globalThis !== "undefined" && (globalThis.SillyTavern || (ctx() && ct
     probe("not-started", { reason: "没有检测到 SillyTavern 上下文，自动启动被跳过" });
 }
 
-return { MODULE_VERSION, PROBE_KEY, probe, INTERCEPTOR_NAME, PANEL_ACTIONS, REQUIRED_CAPS, boot, ygo2Activate, ensureBoot };
+return { MODULE_VERSION, PROBE_KEY, probe, INTERCEPTOR_NAME, PANEL_ACTIONS, REQUIRED_CAPS, boot, whenPanelMounted, ygo2Activate, ensureBoot };
 });
 
-try { globalThis.YgoCardLookupV2Build = {"at":"2026-10-06T10:24:17","hash":"26ec3299","modules":35}; } catch (e) { /* 忽略 */ }
+try { globalThis.YgoCardLookupV2Build = {"at":"2026-10-06T15:33:58","hash":"9f6a2849","modules":35}; } catch (e) { /* 忽略 */ }
 var __entry = __req("index.js");
 try { globalThis.YgoCardLookupV2 = __entry; } catch (e) { /* 忽略 */ }
 })();

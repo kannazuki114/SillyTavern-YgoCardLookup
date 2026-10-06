@@ -5,16 +5,37 @@ export const LEGACY_BASE = "/scripts/extensions/third-party/ygo-card-lookup/";
 
 export const EXT_PATH = "/scripts/extensions/third-party/ygo-card-lookup-v2/";
 let baseOverride = null;
+/** 本扩展自己的目录：经典脚本在【求值那一刻】document.currentScript 就是它自己，和目录/仓库叫什么名字无关。
+ *  这是最可靠的一路 —— 从 GitHub 安装时目录名 = 仓库名（可能是 SillyTavern-YgoCardLookup-v2 这种），
+ *  以前只认名字里含 "ygo-card-lookup" 的目录，换个仓库名 data/ 就全找不到了。 */
+let selfBase = null;
+export function captureSelfBase() {
+    try {
+        if (selfBase) return selfBase;
+        const doc = (typeof document !== "undefined") ? document : null;
+        const cur = doc && doc.currentScript ? doc.currentScript : null;
+        const src = cur ? String(cur.getAttribute("src") || cur.src || "") : "";
+        const at = src.indexOf("/scripts/extensions/");
+        if (at >= 0 && src.lastIndexOf("/") > at) {
+            let head = src.slice(0, src.lastIndexOf("/") + 1);      // 脚本所在目录
+            if (/\/dist\/$/.test(head)) head = head.slice(0, -5);   // 产物在 dist/ 下 → 回到扩展根目录（data/ 与 assets/ 在根上）
+            selfBase = head;
+        }
+    } catch (error) { /* 忽略 */ }
+    return selfBase;
+}
 /** 本扩展自己的目录（打包为经典脚本后用固定路径；测试可覆盖） */
 export function ownBase() {
     if (baseOverride) return baseOverride;
-    // ① 宿主给的扩展路径：**任何目录名都接受**（从 GitHub 安装时目录名 = 仓库名，例如 ygo-card-lookup）
+    // ① 自己脚本所在目录（最准）
+    if (selfBase) return selfBase;
+    // ② 宿主给的扩展路径：只要它看起来像扩展目录就接受（不再强制目录名里含 ygo-card-lookup）
     try {
         const c = typeof ctx === "function" ? ctx() : null;
         const fromHost = c && c.extensionPath ? String(c.extensionPath) : "";
-        if (fromHost && fromHost.indexOf("ygo-card-lookup") >= 0) return fromHost;
+        if (fromHost && (fromHost.indexOf("/scripts/extensions/") >= 0 || fromHost.indexOf("ygo-card-lookup") >= 0)) return fromHost;
     } catch (error) { /* 忽略 */ }
-    // ② 从页面上的 <script> 反推自身目录（这个最准，和目录名无关）
+    // ③ 从页面上的 <script> 反推自身目录（名字对得上的优先）
     try {
         const doc = (typeof document !== "undefined") ? document : null;
         if (doc) {
@@ -54,8 +75,6 @@ export function dataCandidates(name) {
 }
 
 export async function dataFile(name, fetchImpl) {
-    // ① 先用"手动安装"进 IndexedDB 的那一份（v1 模式；装了就用它，没装就往下走）
-    try { const hit = await idbGet("db:" + String(name || ""), 0); if (hit) return hit; } catch (error) { /* 没有 IndexedDB 就跳过 */ }
     const doFetch = fetchImpl || ((typeof fetch === "function") ? fetch : null);
     if (!doFetch) { log("数据", "读取失败：" + name + "（当前环境没有可用的 fetch）"); return ""; }
     const tried = [];
@@ -110,12 +129,16 @@ export function clearCache() { mem.clear(); }
 /** 懒构建 + 复用（并发只会构建一次），失败后允许重试。 */
 export function lazyIndex(builder) {
     let promise = null;
-    return function ensure() {
+    const ensure = function () {
         if (!promise) {
             promise = Promise.resolve().then(builder).catch(function (error) { promise = null; throw error; });
         }
         return promise;
     };
+    /** ★ 手动安装/卸载卡库、清缓存之后必须调它：否则本次会话一直用旧（可能是空的）索引，
+     *   表现就是"装完卡库还是要刷新页面才生效"。 */
+    ensure.reset = function () { promise = null; };
+    return ensure;
 }
 
 /** ── IndexedDB 持久缓存（真实现）：卡库文件重启后不用重新下载 ── */
@@ -222,10 +245,32 @@ export async function dataFileCached(name, ttlMs, fetchImpl) {
 }
 
 /** 清空全部缓存（内存 + 持久） */
+/** 清持久缓存，但保留指定前缀的条目（"db:" 是手动安装的数据库，不是缓存，不能被一起删掉） */
+export async function idbClearExcept(keepPrefix) {
+    const db = await openDb();
+    if (!db) return false;
+    const prefix = String(keepPrefix || "");
+    return (await tx(db, "readwrite", function (store) {
+        if (typeof store.openCursor !== "function") return store.clear();
+        const req = store.openCursor();
+        req.onsuccess = function () {
+            const cur = req.result;
+            if (!cur) return;
+            try {
+                if (prefix && String(cur.key).indexOf(prefix) === 0) { cur.continue(); return; }
+                cur.delete();
+            } catch (error) { /* 忽略 */ }
+            try { cur.continue(); } catch (error) { /* 忽略 */ }
+        };
+        return req;
+    })) !== false;
+}
+
 export async function clearAllCache() {
     mem.clear();
-    const ok = await idbClear();
-    log("缓存", "缓存已清空（持久缓存：" + (ok ? "已清" : "不可用") + "）");
+    // ★ 以前是 idbClear()：把整个对象存储清空 —— 连用户"手动安装的数据库"也一起删了
+    const ok = await idbClearExcept("db:");
+    log("缓存", "缓存已清空（持久缓存：" + (ok ? "已清" : "不可用") + "；手动安装的数据库保留）");
     return ok;
 }
 export function hostReady() { const c = ctx(); return !!(c && (c.chat || c.extensionSettings)); }

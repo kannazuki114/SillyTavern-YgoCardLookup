@@ -1,4 +1,5 @@
 import { ctx, log, emit } from "../core/bus.js";
+import { registry } from "../core/registry.js";
 import { settings, DEFAULTS } from "../core/settings.js";
 import { ownBase } from "../core/http.js";
 
@@ -28,6 +29,7 @@ export const FIELDS = [
     { group: "提示词", type: "select", key: "injectPosition", label: "注入位置", options: [["chat", "聊天内（可设深度，推荐）"], ["before", "主提示词之前"], ["after", "主提示词之后"]] },
     { group: "提示词", type: "number", key: "injectDepth", label: "聊天内注入深度（0=最后一条之后）", min: 0, max: 20 },
     { group: "提示词", type: "check", key: "skipQuiet", label: "摘要等 quiet 生成不注入" },
+    { group: "提示词", type: "check", key: "injectionFallback", label: "拦截器不生效时用事件兜底注入", hint: "宿主不支持 generate_interceptor 时（桌面客户端常见），在消息发送前用同一个拦截器补一次注入。" },
     { group: "提示词", type: "textarea", key: "injectNote", label: "附加处理要求（留空不加）" },
     { group: "提示词", type: "select", key: "injectNotePosition", label: "注入附注的位置", hint: "tail＝跟在卡片资料之后（默认，适合「这段资料怎么用」）；head＝放在整块最前面（适合「全局设定/风格/立场」类文本，AI 更容易当成总纲）。", options: [["tail", "tail — 跟在卡片资料后（默认）"], ["head", "head — 放在整块最前"]] },
     { group: "提示词", type: "note", label: "「注入附注」里的文字会原样进入发给 AI 的提示词（预算不足时优先保留它，不会先被截断）。" },
@@ -62,7 +64,10 @@ export const FIELDS = [
     { group: "玩法", type: "check", key: "summonAutoApply", label: "召唤检查通过时自动上盘", hint: "勾上后：检查合法就自动执行（祭品/素材送墓、怪兽上场、用掉本回合通招），并把结果写进盘面。关掉则只判定不动盘面。" },
     { group: "玩法", type: "check", key: "shopIncludeDiy", label: "DIY 卡也进商店 / 卡库抽卡", hint: "勾上（默认）：每日商店与随机抽卡会把你的 DIY 卡混进池子；关掉只用真实卡库。" },
     { group: "查询内容", type: "number", key: "maxResults", label: "搜索结果上限", hint: "模糊搜索最多返回几条（1-50，默认 5）。", min: 1, max: 50 },
+    { group: "玩法", type: "select", key: "packRegion", label: "开卡包地区", hint: "按哪个地区的卡池开包（sc＝官方简中 / jp＝OCG 日文 / en＝TCG 英文）。", options: [["sc", "官方简中（sc）"], ["jp", "OCG 日文（jp）"], ["en", "TCG 英文（en）"]] },
     { group: "玩法", type: "number", key: "packSize", label: "每包抽几张", hint: "开卡包/随机抽卡每次抽几张（1-20，默认 5）。", min: 1, max: 20 },
+    { group: "玩法", type: "number", key: "shopSize", label: "每日商店件数", hint: "每天上架几件（1-20，默认 5）。", min: 1, max: 20 },
+    { group: "玩法", type: "number", key: "handDraw", label: "起手模拟张数", hint: "起手模拟默认抽几张（1-20，默认 5）。", min: 1, max: 20 },
     { group: "玩法", type: "number", key: "packMinSize", label: "卡池下限（几张以下不当作卡包）", hint: "卡池太小的包会被跳过（1-300，默认 20）。", min: 1, max: 300 },
     { group: "玩法", type: "number", key: "handRuns", label: "起手模拟次数", hint: "起手模拟默认跑几次（1-200，默认 1）。", min: 1, max: 200 },
     { group: "玩法", type: "button", key: "deckValidate", label: "校验聊天里的卡组", action: "deckValidate" },
@@ -76,7 +81,6 @@ export const FIELDS = [
     { group: "玩法", type: "button", key: "diyList", label: "我的 DIY 卡（图形列表）", action: "diyList" },
     { group: "玩法", type: "select", key: "diyFrameMode", label: "DIY 卡面渲染方式", hint: "css＝自绘卡面（默认，永远可用）；real＝真实卡框 PNG（素材已内置；某张加载失败会自动回退 css）。", options: [["css", "自绘卡面（css）"], ["real", "真实卡框 PNG（real）"]] },
     { group: "玩法", type: "button", key: "diyCheckAssets", label: "检查卡框素材", action: "diyCheckAssets" },
-    { group: "玩法", type: "select", key: "diyFrameMode", label: "DIY 卡框模式", options: ["real", "css"], optionLabels: ["真卡框（素材）", "自绘（简版）"], hint: "real＝用 assets/yugioh 的真卡框；css＝简版自绘" },
     { group: "联动", type: "check", key: "vrmReaction", label: "抽到稀有卡时让 VRM 角色做表情（需装 VRM 扩展）" },
     { group: "联动", type: "check", key: "webSearchFallback", label: "本地查不到时用网络搜索（需装 Web Search 扩展）" },
     { group: "日志", type: "check", key: "logVerbose", label: "详细日志" },
@@ -87,10 +91,6 @@ export const FIELDS = [
     { group: "查看", type: "button", key: "viewBoard", label: "⚔️ 决斗盘", action: "viewBoard" },
     { group: "查看", type: "button", key: "viewRecap", label: "📜 本局卡表", action: "viewRecap" },
     { group: "维护", type: "button", key: "clearCache", label: "清空缓存（含持久缓存）", action: "clearCache" },
-    { group: "维护", type: "button", key: "dbImport", label: "📥 安装数据库（手动选文件）", action: "dbImport", hint: "v1 模式：把 卡名索引/卡表/字段表/异画索引 装进 IndexedDB，装了就不依赖 data/ 目录。" },
-    { group: "维护", type: "button", key: "dbImportUrl", label: "🔗 从 URL 安装数据库", action: "dbImportUrl", hint: "给一个目录地址（以 / 结尾）或单个文件地址。" },
-    { group: "维护", type: "button", key: "dbTest", label: "🧪 测试数据库", action: "dbTest", hint: "报告 4 个库各读到多少、来源是手动安装还是随包文件，并真查一张卡。" },
-    { group: "维护", type: "button", key: "dbUninstall", label: "🗑 卸载手动安装的数据库", action: "dbUninstall", hint: "清掉 IndexedDB 里手动装的那份，回到随包 data/。" },
     { group: "维护", type: "button", key: "cacheInfo", label: "查看缓存状态", action: "cacheInfo" },
     { group: "日志", type: "check", key: "logEnabled", label: "启用日志" },
     { group: "日志", type: "check", key: "logToast", label: "注入时弹提示", hint: "每次自动注入都会弹一个小提示，便于确认是否生效。" },

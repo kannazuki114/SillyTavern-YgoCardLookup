@@ -34,7 +34,7 @@ function emitApi(event, payload) {
 export function actions() {
     const out = [];
     for (const key of registry.list()) {
-        const m = /^(?:runAction|tool|cmd):(.+)$/.exec(String(key));
+        const m = /^(?:runAction|tool|cmd|ui):(.+)$/.exec(String(key));   // ui: 也暴露（sendbox/buy/collection…），酒馆助手脚本直接按动作名调
         if (m && out.indexOf(m[1]) < 0) out.push(m[1]);
     }
     for (const k of Object.keys(customActions)) if (out.indexOf(k) < 0) out.push(k);
@@ -44,7 +44,10 @@ export function actions() {
 /** 等索引就绪（外部脚本调用前可以先 await） */
 export async function ready() {
     const pending = [];
-    for (const name of ["getNameIndex", "getStatsIndex", "getSetnames"]) {
+    // 数据层注册的键是 index:names / index:stats / index:setnames；
+    // 以前这里写 getNameIndex/getStatsIndex/getSetnames（三个都不存在）→ pending 恒空，ready() 立刻返回 true，
+    // 外部脚本"等就绪再查卡"会随机查不到。
+    for (const name of ["index:names", "index:stats", "index:setnames"]) {
         if (registry.has(name)) { try { pending.push(registry.call(name)); } catch (error) { /* 忽略 */ } }
     }
     await Promise.allSettled(pending);
@@ -63,7 +66,7 @@ export function registerAction(name, fn) {
 export function actionKeys(name) {
     const n = String(name || "").trim();
     if (!n) return [];
-    return ["tool:" + n, "cmd:" + n, "runAction:" + n];
+    return ["tool:" + n, "cmd:" + n, "runAction:" + n, "ui:" + n];
 }
 
 /** 调用一个动作，返回 { ok, action, text, ms }（永不抛错） */
@@ -124,8 +127,8 @@ export function off(event, handler) {
     return at >= 0;
 }
 
-/** 导出可迁移数据（收藏册 / DIY / 俗称表 / 卡池开关 / 盘面） */
-export function exportData() {
+/** 导出可迁移数据（收藏册 / DIY / 俗称表 / 卡池开关 / 盘面）—— 异步：收藏册要走能力表 */
+export async function exportData() {
     const out = {
         version: MODULE_VERSION_PUBLIC,
         at: new Date().toISOString(),
@@ -138,12 +141,13 @@ export function exportData() {
             link: settings.get("poolLink") !== false,
         },
     };
-    try { if (registry.has("collection:state")) out.collection = registry.call("collection:state"); } catch (error) { /* 忽略 */ }
+    // 漏了 await：以前就算能力存在，这里存进去的也是 Promise（JSON 序列化后变 {}）
+    try { if (registry.has("collection:state")) out.collection = await registry.call("collection:state"); } catch (error) { /* 忽略 */ }
     return out;
 }
 
-/** 导入（白名单字段；mode=merge 保留现有多余项，replace 直接覆盖） */
-export function importData(data, options) {
+/** 导入（白名单字段；mode=merge 保留现有多余项，replace 直接覆盖）—— 异步：收藏册要走能力表 */
+export async function importData(data, options) {
     const payload = (data && typeof data === "object") ? data : null;
     if (!payload) return { ok: false, error: "需要传一个对象" };
     const mode = String((options && options.mode) || "merge");
@@ -164,7 +168,7 @@ export function importData(data, options) {
             applied.push("pool");
         }
         if (payload.collection && typeof payload.collection === "object" && registry.has("collection:import")) {
-            registry.call("collection:import", { collection: payload.collection, mode: mode });
+            await registry.call("collection:import", { collection: payload.collection, mode: mode });
             applied.push("collection");
         }
         settings.save();

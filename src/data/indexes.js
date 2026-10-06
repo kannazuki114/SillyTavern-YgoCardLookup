@@ -89,13 +89,23 @@ export const getNameIndex = lazyIndex(async function () { return parseNames(awai
 export const getStatsIndex = lazyIndex(async function () { return parseStats(await readText(FILES.stats)); });
 export const getSetnames = lazyIndex(async function () { return parseSetnames(await readText(FILES.setnames)); });
 
+/** ★ 重置懒索引：手动安装/卸载卡库、清缓存之后调用，下一次查询就会重新读数据源。
+ *  没有它的时候：先在没库的状态下查过一次卡（索引被解析成空并缓存），装完库本会话仍然查不到，
+ *  必须刷新页面 —— 实测就是这个坑。 */
+export function resetIndexes() {
+    try { getNameIndex.reset(); getStatsIndex.reset(); getSetnames.reset(); } catch (error) { /* 忽略 */ }
+    log("数据", "卡库索引已重置（下次查询重新读取数据源）");
+    return true;
+}
+
 /** 4) 注册能力（数据层对外只暴露这几个） */
 export function registerIndexes() {
     registry.provide("index:names", getNameIndex);
     registry.provide("index:stats", getStatsIndex);
     registry.provide("index:setnames", getSetnames);
-    log("数据", "索引能力已注册（names/stats/setnames）");
+    registry.provide("index:reset", async function () { return resetIndexes(); });
+    log("数据", "索引能力已注册（names/stats/setnames/reset）");
 }
 
 /** 5) 导出 */
-export const indexes = { FILES, configure, normalizeKey, parseNames, parseStats, parseSetnames, getNameIndex, getStatsIndex, getSetnames, registerIndexes };
+export const indexes = { FILES, configure, normalizeKey, parseNames, parseStats, parseSetnames, getNameIndex, getStatsIndex, getSetnames, resetIndexes, registerIndexes };

@@ -29,16 +29,27 @@ export function cleanMessageAt(index) {
     const m = chat[index];
     if (!m || typeof m.mes !== "string") return false;
     const cleaned = stripCitations(m.mes);
-    if (cleaned === m.mes) return false;
+    // ★ swipe 记录要一起改（v1 同款：ygo-card-lookup/index.js:3013）：只改 m.mes 的话，
+    //   点 ◀/▶ 切回旧 swipe 或从 swipes 重渲染，[^1] 又会冒出来。
+    let touchedSwipe = false;
+    if (Array.isArray(m.swipes) && typeof m.swipe_id === "number" && typeof m.swipes[m.swipe_id] === "string") {
+        const sw = stripCitations(m.swipes[m.swipe_id]);
+        if (sw !== m.swipes[m.swipe_id]) { m.swipes[m.swipe_id] = sw; touchedSwipe = true; }
+    }
+    if (cleaned === m.mes && !touchedSwipe) return false;
     m.mes = cleaned;
-    log("引用", "已清理第 " + index + " 楼的引用标记");
+    log("引用", "已清理第 " + index + " 楼的引用标记" + (touchedSwipe ? "（含 swipe 记录）" : ""));
     return true;
 }
 
 /** 清理最后一条角色消息（MESSAGE_RECEIVED 的常见用法） */
-export function cleanLastMessage() {
+export function cleanLastMessage(id) {
     const c = ctx();
     const chat = Array.isArray(c.chat) ? c.chat : [];
+    // MESSAGE_RECEIVED 给的就是刚进楼的那一条（宿主传的是 index）——给了就清它，
+    // 别再去"猜最后一条非玩家消息"（聊天里有系统/旁白楼时会清错人）
+    const idx = Number(id);
+    if (Number.isInteger(idx) && idx >= 0 && idx < chat.length) return cleanMessageAt(idx);
     for (let i = chat.length - 1; i >= 0; i--) {
         if (chat[i] && !chat[i].is_user) return cleanMessageAt(i);
     }

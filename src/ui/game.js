@@ -171,7 +171,17 @@ export function installBuyDelegate() {
 /** 3) 打开：统一走弹窗（受 resultPopup 开关控制） */
 export async function showView(title, html) {
     const c = ctx();
-    if (settings.get("resultPopup") === false || !c || typeof c.callGenericPopup !== "function") { log("界面", "无法弹窗，已跳过 " + title); return false; }
+    if (settings.get("resultPopup") === false || !c || typeof c.callGenericPopup !== "function") {
+        // 面板「结果用弹窗面板显示」关掉时，以前这里直接 return false —— 收藏册/商店/决斗盘/本局卡表/查卡/两个编辑器
+        // 全都变成"按了没反应"。现在退回文本：走按钮的 toast/日志通道，用户至少能看到内容。
+        const plain = String(html || "")
+            .replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<script[\s\S]*?<\/script>/gi, " ")
+            .replace(/<br\s*\/?>/gi, "\n").replace(/<\/[^>]+>/g, " ").replace(/<[^>]*>/g, " ")
+            .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+            .replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+        log("界面", "未弹窗（" + title + "）：" + plain.slice(0, 200));
+        return plain ? (title + "：\n" + plain.slice(0, 4000)) : false;
+    }
     const types = c.POPUP_TYPE || {};
     try {
         await c.callGenericPopup(html, types.TEXT === undefined ? 1 : types.TEXT, "", { wide: true, large: true, allowVerticalScrolling: true, okButton: "关闭" });
