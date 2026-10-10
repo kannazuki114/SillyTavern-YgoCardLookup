@@ -116,7 +116,10 @@ export async function handlePromptReady(eventData) {
     if (!eventData || eventData.dryRun === true) return 0;                // 预览/计数不算真发送
     const chat = eventData.chat;
     if (!Array.isArray(chat) || !chat.length) return 0;
-    try { if (typeof settings.isolationActive === "function" && settings.isolationActive()) return 0; } catch (error) { /* 没有该能力就继续 */ }
+    if (settings.isolationActive() || !settings.groupEnabled("自动检测注入") || !settings.groupEnabled("查询内容")) {
+        stripMarker(chat);
+        return 0;
+    }
     const mode = String(settings.get("bodyEditMode") || "off");
     if (mode !== "append") { const n = stripMarker(chat); if (n) log("发送体", "已清掉上一轮追加的资料 " + n + " 处"); return 0; }
     const block = await buildBlock(chat);
@@ -135,39 +138,14 @@ export function installSendBody(source, eventTypes, name) {
     // ① 官方 ST 钩子（真正基于 SillyTavern 生成链路时有效）
     try {
         source.on(mapped(key), function (eventData) {
-            Promise.resolve(handlePromptReady(eventData)).catch(function (error) {
+            return Promise.resolve(handlePromptReady(eventData)).catch(function (error) {
                 log("发送体", "处理失败（不影响发送）：" + (error && error.message ? error.message : error));
             });
         });
         mounted++;
         log("发送体", "已挂上发送体钩子：" + mapped(key));
     } catch (error) { log("发送体", "官方钩子挂载失败（不影响发送）：" + (error && error.message ? error.message : error)); }
-    // ② v1 的兜底通道：桌面客户端（tt）既不执行 generate_interceptor、也不触发上面的官方钩子，
-    //    只在 GENERATION_AFTER_COMMANDS（提示词组装前）与 MESSAGE_SENT 触发 —— 资料必须在这里追加才进本次发送。
-    const runChannel = function (label) {
-        try {
-            const c = ctx();
-            const chat = (c && Array.isArray(c.chat)) ? c.chat : null;
-            if (!chat || !chat.length) return;
-            Promise.resolve(handlePromptReady({ chat: chat })).then(function (n) {
-                if (n) log("发送体", label + "：已把资料追加进即将发送的消息（" + n + " 处）");
-                if (registry.has("injectFallback:run")) {
-                    return registry.call("injectFallback:run").then(function (r) {
-                        if (r && r.ok) log("兜底", label + " 兜底注入 " + r.chars + " 字");
-                    });
-                }
-            }).catch(function (error) {
-                log("发送体", label + " 处理失败（不影响发送）：" + (error && error.message ? error.message : error));
-            });
-        } catch (error) { try { log("发送体", label + " 异常（不影响发送）：" + (error && error.message ? error.message : error)); } catch (e2) { /* 忽略 */ } }
-    };
-    for (const k of ["GENERATION_AFTER_COMMANDS", "MESSAGE_SENT"]) {
-        try {
-            source.on(mapped(k), function (a) { if (String(a || "") === "quiet") return; runChannel(mapped(k)); });
-            mounted++;
-            log("发送体", "已挂兜底通道：" + mapped(k));
-        } catch (error) { log("发送体", "兜底通道挂载失败：" + mapped(k)); }
-    }
+    // MESSAGE_SENT / GENERATION_AFTER_COMMANDS 由入口统一处理，避免同轮重复执行。
     return mounted > 0;
 }
 

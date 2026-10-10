@@ -15,12 +15,12 @@ export const COMMANDS = [
     { name: "ygodeck", help: "卡组校验：/ygodeck 卡表文本", action: "deck", named: [], build: (n, u) => ({ deck: u }) },
     { name: "ygohand", help: "起手模拟：/ygohand 卡表文本", action: "hand", named: ["draw","runs"], build: (n, u) => ({ deck: u, draw: n.draw, runs: n.runs }) },
     { name: "ygosummon", help: "召唤检查：/ygosummon 青眼白龙", action: "summon", named: ["method"], build: (n, u) => ({ query: u, method: n.method }) },
-    { name: "ygoduel", help: "决斗盘：/ygoduel action=show", action: "board", named: ["action","side","value"], build: (n) => ({ action: n.action || "show", side: n.side, value: n.value }) },
+    { name: "ygoduel", help: "决斗盘：/ygoduel action=show", action: "board", named: ["action","side","value","from","to"], build: (n) => ({ action: n.action || "show", side: n.side, value: n.value, from: n.from, to: n.to }) },
     { name: "ygorecap", help: "本局卡表：/ygorecap scope=all limit=20", action: "recap", named: ["scope","limit"], build: (n) => ({ scope: n.scope, limit: n.limit }) },
     { name: "ygoshop", help: "每日商店：/ygoshop size=5 date=2026-01-01", action: "shop", named: ["size","date"], build: (n) => ({ size: n.size, date: n.date }) },
     { name: "ygoalbum", help: "收藏册：/ygoalbum [系列]", action: "collection", named: [], build: (n, u) => ({ series: u }) },
     { name: "ygoalias", help: "俗称表：/ygoalias 俗称=正式名", action: "alias", named: [], build: (n, u) => ({ text: u }) },
-    { name: "ygodiy", help: "自制卡：/ygodiy add name=卡名 type=怪兽/效果", action: "diy", named: ["action","name","type","attribute","race","level","atk","def","desc","image"], build: (n, u) => ({ action: n.action || (u ? "edit" : "editor"), name: n.name, type: n.type, attribute: n.attribute, race: n.race, level: n.level, atk: n.atk, def: n.def, desc: n.desc, image: n.image }) },
+    { name: "ygodiy", help: "自制卡：/ygodiy add name=卡名 type=怪兽/效果", action: "diy", named: ["action","name","type","attribute","race","level","atk","def","desc","image"], build: (n, u) => ({ action: n.action || (/^(add|del|edit|list|editor)$/.test(u.trim()) ? u.trim() : "editor"), name: n.name || (/^(add|del|edit|list|editor)$/.test(u.trim()) ? undefined : u.trim()), type: n.type, attribute: n.attribute, race: n.race, level: n.level, atk: n.atk, def: n.def, desc: n.desc, image: n.image }) },
     { name: "ygodeckimage", help: "卡组展示图：/ygodeckimage 卡表文本", action: "deckimage", named: [], build: (n, u) => ({ deck: u }) },
     { name: "ygoselftest", help: "功能自检：/ygoselftest", action: "selftest", named: [], build: () => ({}) },
     { name: "ygoprompt", help: "打开提示词查看/编辑窗口", action: "prompt", named: [], ui: true, build: () => ({}) },
@@ -70,6 +70,9 @@ export function commandProblems() {
 
 /** 派发：ui: 前缀走界面能力，其余走 cmd:。 */
 export async function dispatchCommand(action, args, isUi) {
+    if (actionAllowed(action, "command") === false) {
+        return "「" + actionGroup(action) + "」栏目已在面板里停用（栏目隔离），要用请先在面板里打开它。";
+    }
     // 命令：先出文本（给 AI 与日志），再同步弹一个图形面板（由 resultPopup 开关控制）
     if (!isUi) {
         const text = await runCommand(action, args, false);
@@ -84,7 +87,7 @@ export async function dispatchCommand(action, args, isUi) {
 
 async function runCommand(action, args, isUi) {
     // 栏目隔离：所属栏目被停用时，指令直接拒绝并说明原因（不静默失败）
-    if (typeof actionAllowed === "function" && actionAllowed(action) === false) {
+    if (typeof actionAllowed === "function" && actionAllowed(action, "command") === false) {
         const g = actionGroup(action);
         return "「" + g + "」栏目已在面板里停用（栏目隔离），要用请先在面板里打开它。";
     }
@@ -112,6 +115,7 @@ export function registerCommands() {
     log("命令", "已注册 " + provided + "/" + COMMANDS.length + " 条 cmd:* 能力（面板/脚本/对外接口可用）");
     const hasSlash = !!(parser && mk && typeof parser.addCommandObject === "function");
     if (!hasSlash) log("命令", "当前客户端没有斜杠命令 API：命令仍注册为 cmd:* 能力（面板/脚本/对外接口可用），只是不出现在斜杠列表里");
+    if (!hasSlash) return 0;
     let count = 0;
     for (const cmd of COMMANDS) {
         try {

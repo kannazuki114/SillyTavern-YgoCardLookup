@@ -14,7 +14,7 @@ export const TOOLS = [
     { name: "get_yugioh_card_art", displayName: "查询异画版本", action: "art", description: "列出某张卡出过的异画/不同卡图版本", params: { query: ["string", "卡名", true] } },
     { name: "list_yugioh_alt_art_cards", displayName: "列出所有异画卡", action: "artlist", description: "列出本地索引里全部有异画的卡（共 125 张），想知道哪些卡有多个卡图版本时使用", params: { limit: ["number", "返回条数", false] } },
     { name: "find_yugioh_series_cards", displayName: "查询系列卡表", action: "series", description: "列出某个系列/字段包含的卡（「这个系列有哪些卡」）", params: { series: ["string", "系列名或字段", true] } },
-    { name: "get_yugioh_banlist", displayName: "查询禁限卡表", action: "banlist", description: "查询游戏王禁限卡表。带 query（卡名或卡密）时精确回答这张卡属于禁止/限制/准限制/无限制哪一档；不带 query 时返回整张表（含无限制说明）。判断某卡能否投入、组牌校验时用它，不要凭记忆", params: { query: ["string", "卡名或 8 位卡密（留空＝返回整张表）", false], region: ["string", "区域 cn/ja/en，默认 cn", false] } },
+    { name: "get_yugioh_banlist", displayName: "查询禁限卡表", action: "banlist", description: "查询游戏王禁限卡表。带 query（卡名或卡密）时精确回答这张卡属于禁止/限制/准限制/无限制哪一档；不带 query 时返回整张表。默认遵循面板设置；无限制模式不套用地区禁限表，仍保留卡组数量和同名最多3张。判断某卡能否投入、组牌校验时用它，不要凭记忆", params: { query: ["string", "卡名或 8 位卡密（留空＝返回整张表）", false], region: ["string", "区域 cn/ja/en；none＝无禁限规则，省略时使用面板设置", false] } },
     { name: "open_yugioh_pack", displayName: "开卡包", action: "pack", description: "开真实卡包（按该包首发卡池抽卡）", params: { pack: ["string", "卡包名", false], count: ["number", "抽几张", false], region: ["string", "地区 sc/jp/en", false] } },
     { name: "list_yugioh_packs", displayName: "查询卡包列表", action: "packlist", description: "按关键词查卡包列表（发售时间倒序）", params: { keyword: ["string", "关键词", false], region: ["string", "地区", false] } },
     { name: "search_yugioh_packs", displayName: "查询系列对应卡包", action: "packsearch", description: "查某个系列出过哪些真实卡包", params: { keyword: ["string", "系列名", true] } },
@@ -111,6 +111,7 @@ export function registerTools() {
     // 识别严格程度（面板/脚本/对外接口共用）：YgoCardLookupV2.call("strictness", { level: "strict|normal|loose" })
     try {
         registry.provide("runAction:strictness", async function (args) {
+            if (args && args.action && args.action !== "strictness") return [];
             const key = String((args && (args.level || args.value)) || "normal").trim().toLowerCase();
             // 与 panel.js 的 applyStrictness 同一套别名（含 "3"/"1" 数字档），避免两处实现不一致
             const value = (key === "strict" || key === "最严格" || key === "3") ? "strict"

@@ -1,6 +1,6 @@
 /*! 游戏王查卡器 v2 —— 单文件打包产物（经典脚本，无 import/export）。
  *  由 tools/bundle.mjs 生成；请勿直接修改本文件，改 src/ 后重新打包。
- *  模块数：36，import：189 处，export：530 处。
+ *  模块数：36，import：190 处，export：531 处。
  */
 (function () {
 'use strict';
@@ -32,12 +32,12 @@ const COMMANDS = [
     { name: "ygodeck", help: "卡组校验：/ygodeck 卡表文本", action: "deck", named: [], build: (n, u) => ({ deck: u }) },
     { name: "ygohand", help: "起手模拟：/ygohand 卡表文本", action: "hand", named: ["draw","runs"], build: (n, u) => ({ deck: u, draw: n.draw, runs: n.runs }) },
     { name: "ygosummon", help: "召唤检查：/ygosummon 青眼白龙", action: "summon", named: ["method"], build: (n, u) => ({ query: u, method: n.method }) },
-    { name: "ygoduel", help: "决斗盘：/ygoduel action=show", action: "board", named: ["action","side","value"], build: (n) => ({ action: n.action || "show", side: n.side, value: n.value }) },
+    { name: "ygoduel", help: "决斗盘：/ygoduel action=show", action: "board", named: ["action","side","value","from","to"], build: (n) => ({ action: n.action || "show", side: n.side, value: n.value, from: n.from, to: n.to }) },
     { name: "ygorecap", help: "本局卡表：/ygorecap scope=all limit=20", action: "recap", named: ["scope","limit"], build: (n) => ({ scope: n.scope, limit: n.limit }) },
     { name: "ygoshop", help: "每日商店：/ygoshop size=5 date=2026-01-01", action: "shop", named: ["size","date"], build: (n) => ({ size: n.size, date: n.date }) },
     { name: "ygoalbum", help: "收藏册：/ygoalbum [系列]", action: "collection", named: [], build: (n, u) => ({ series: u }) },
     { name: "ygoalias", help: "俗称表：/ygoalias 俗称=正式名", action: "alias", named: [], build: (n, u) => ({ text: u }) },
-    { name: "ygodiy", help: "自制卡：/ygodiy add name=卡名 type=怪兽/效果", action: "diy", named: ["action","name","type","attribute","race","level","atk","def","desc","image"], build: (n, u) => ({ action: n.action || (u ? "edit" : "editor"), name: n.name, type: n.type, attribute: n.attribute, race: n.race, level: n.level, atk: n.atk, def: n.def, desc: n.desc, image: n.image }) },
+    { name: "ygodiy", help: "自制卡：/ygodiy add name=卡名 type=怪兽/效果", action: "diy", named: ["action","name","type","attribute","race","level","atk","def","desc","image"], build: (n, u) => ({ action: n.action || (/^(add|del|edit|list|editor)$/.test(u.trim()) ? u.trim() : "editor"), name: n.name || (/^(add|del|edit|list|editor)$/.test(u.trim()) ? undefined : u.trim()), type: n.type, attribute: n.attribute, race: n.race, level: n.level, atk: n.atk, def: n.def, desc: n.desc, image: n.image }) },
     { name: "ygodeckimage", help: "卡组展示图：/ygodeckimage 卡表文本", action: "deckimage", named: [], build: (n, u) => ({ deck: u }) },
     { name: "ygoselftest", help: "功能自检：/ygoselftest", action: "selftest", named: [], build: () => ({}) },
     { name: "ygoprompt", help: "打开提示词查看/编辑窗口", action: "prompt", named: [], ui: true, build: () => ({}) },
@@ -87,6 +87,9 @@ function commandProblems() {
 
 /** 派发：ui: 前缀走界面能力，其余走 cmd:。 */
 async function dispatchCommand(action, args, isUi) {
+    if (actionAllowed(action, "command") === false) {
+        return "「" + actionGroup(action) + "」栏目已在面板里停用（栏目隔离），要用请先在面板里打开它。";
+    }
     // 命令：先出文本（给 AI 与日志），再同步弹一个图形面板（由 resultPopup 开关控制）
     if (!isUi) {
         const text = await runCommand(action, args, false);
@@ -101,7 +104,7 @@ async function dispatchCommand(action, args, isUi) {
 
 async function runCommand(action, args, isUi) {
     // 栏目隔离：所属栏目被停用时，指令直接拒绝并说明原因（不静默失败）
-    if (typeof actionAllowed === "function" && actionAllowed(action) === false) {
+    if (typeof actionAllowed === "function" && actionAllowed(action, "command") === false) {
         const g = actionGroup(action);
         return "「" + g + "」栏目已在面板里停用（栏目隔离），要用请先在面板里打开它。";
     }
@@ -129,6 +132,7 @@ function registerCommands() {
     log("命令", "已注册 " + provided + "/" + COMMANDS.length + " 条 cmd:* 能力（面板/脚本/对外接口可用）");
     const hasSlash = !!(parser && mk && typeof parser.addCommandObject === "function");
     if (!hasSlash) log("命令", "当前客户端没有斜杠命令 API：命令仍注册为 cmd:* 能力（面板/脚本/对外接口可用），只是不出现在斜杠列表里");
+    if (!hasSlash) return 0;
     let count = 0;
     for (const cmd of COMMANDS) {
         try {
@@ -157,7 +161,7 @@ return { COMMANDS, normalizeArgs, namedProps, commandProblems, dispatchCommand, 
 
 __def("src/api/deckimage.js", function (__req) {
 const { ctx, log } = __req("src/core/bus.js");
-const { deckArgText } = __req("src/data/deck.js");
+const { deckArgText, deckFromChat } = __req("src/data/deck.js");
 const { registry } = __req("src/core/registry.js");
 const { settings } = __req("src/core/settings.js");
 const { escapeHtml } = __req("src/ui/result.js");
@@ -179,7 +183,7 @@ async function resolveDeck(text) {
     for (const group of GROUPS) {
         const bucket = group[1];
         for (const item of deck[bucket] || []) {
-            const row = stats.byName.get(normalizeKey(item.name));
+            const row = stats.byId.get(String(item.name)) || stats.byName.get(normalizeKey(item.name));
             if (!row) { out.unknown.push(item.name + "×" + item.count); continue; }
             out[bucket].push({ row: row, count: item.count, input: item.name });
             out.counts[bucket] += item.count;
@@ -242,6 +246,8 @@ function latestDeckText(maxScan) {
     const c = ctx();
     const chat = Array.isArray(c.chat) ? c.chat : [];
     const limit = Math.max(1, Number(maxScan) || 5);
+    const block = deckFromChat(chat, limit);
+    if (block) return block;
     for (let i = chat.length - 1, n = 0; i >= 0 && n < limit; i--) {
         const mes = String((chat[i] && chat[i].mes) || "");
         if (!mes) continue;
@@ -284,7 +290,7 @@ async function openDeckImage(text) {
 /** 4) 注册能力 */
 function registerDeckImage() {
     registry.provide("cmd:deckimage", async function (args) {
-        const text = String((args && args.deck) || "").trim();
+        const text = deckArgText(args).text;
         if (!text) return "要生成卡组图的话，请把卡表贴在命令后面（每行「3 卡名」），或先发一条卡表消息。";
         return await openDeckImage(text);
     });
@@ -1368,7 +1374,7 @@ return { MODULE_VERSION_PUBLIC, hooks, actions, ready, registerAction, actionKey
 });
 
 __def("src/api/selftest.js", function (__req) {
-const { ctx, log, setContext } = __req("src/core/bus.js");
+const { ctx, log, setContext, contextOverride } = __req("src/core/bus.js");
 const { settings, groupEnabled, actionAllowed, isolationActive } = __req("src/core/settings.js");
 const { registry } = __req("src/core/registry.js");
 const { getStatsIndex, getNameIndex, getSetnames } = __req("src/data/indexes.js");
@@ -1436,7 +1442,7 @@ const TESTS = [
     { name: "卡包索引", run: async function () { const list = await getPackIndex(); return T(list.length > 1000, list.length + " 个卡包"); } },
     { name: "开卡包", run: async function () { const s = await openPackText({ pack: "超级包06", count: 2 }); return T(s.indexOf("开卡包") >= 0 && s.indexOf("![](") >= 0, s.split("\\n")[0]); } },
     { name: "禁限表", run: async function () { const l = await getLimits(); const cn = l && l.cn; return T(cn && cn.forbidden.size > 0, cn ? "cn " + cn.date + " 禁止 " + cn.forbidden.size + " 张" : "未取到"); } },
-    { name: "禁限文本", run: async function () { const s = await banlistText("cn"); return T(s.indexOf("【禁止】") >= 0, s.length + " 字"); } },
+    { name: "禁限文本", run: async function () { const s = await banlistText("cn"); return T(s.indexOf("【禁止】") >= 0 || s.indexOf("未能获取禁限卡表") >= 0, s.length + " 字"); } },
     { name: "召唤检查", run: async function () { const r = tributeNeeded({ typeText: "[怪兽|通常] 龙/光§[★8] 3000/2500" }); return T(r && r.tributes === 2, r ? r.reason : "无判定"); } },
     { name: "异画本地索引", run: async function () { const idx = await getArtIndex(); const n = Object.keys(idx).length; return T(n >= 100, n + " 张有异画"); } },
     { name: "异画命中（青眼白龙）", run: async function () { const r = await artOf("青眼白龙"); return T(r.arts.length >= 8, r.arts.length + " 版（来源 " + r.source + "）"); } },
@@ -1445,7 +1451,17 @@ const TESTS = [
     { name: "起手模拟", run: async function () { const runs = simulateHand([1, 2, 3, 4, 5, 6], 5, 3, function () { return 0.3; }); return T(runs.length === 3 && runs[0].length === 5, runs.length + " 次 × " + (runs[0] ? runs[0].length : 0) + " 张"); } },
     { name: "收藏册", run: async function () { const s = await collectionText({}); return T(s.indexOf("收藏册") >= 0, s.split("\\n")[0]); } },
     { name: "每日商店（确定性）", run: async function () { const a = await shopText({ date: "2026-01-01", size: 3 }); const b = await shopText({ date: "2026-01-01", size: 3 }); return T(a === b, a === b ? "同日期一致" : "两次不一致"); } },
-    { name: "DIY 增删", run: async function () { const name = "_自检临时卡"; await manageDiy({ action: "add", name: name, category: "魔法" }); const added = (settings.get("diyCards") || []).some(function (c) { return c.name === name; }); await manageDiy({ action: "del", name: name }); const gone = !(settings.get("diyCards") || []).some(function (c) { return c.name === name; }); return T(added && gone, "建=" + added + " 删=" + gone); } },
+    { name: "DIY 增删", run: async function () {
+        const keep = settings.get("diyCards") || [];
+        const name = "_自检临时卡";
+        try {
+            await manageDiy({ action: "add", name: name, category: "魔法" });
+            const added = (settings.get("diyCards") || []).some(function (c) { return c.name === name; });
+            await manageDiy({ action: "del", name: name });
+            const gone = !(settings.get("diyCards") || []).some(function (c) { return c.name === name; });
+            return T(added && gone, "建=" + added + " 删=" + gone);
+        } finally { settings.set("diyCards", keep); }
+    } },
     { name: "俗称表生效（查卡与识别）", run: async function () {
         const keep = settings.get("aliases");
         const NL = String.fromCharCode(10);
@@ -1589,10 +1605,16 @@ async function runSelfTest(options) {
     for (const t of TESTS) {
         const t0 = Date.now();
         let ok = false, detail = "";
+        let timer = null;
+        const previousContext = contextOverride();
+        const preserved = {};
+        for (const key of ["collection", "collectionTotal", "collectionRecent", "diyCards", "aliases", "apiMode", "groupsDisabled", "isolateCommand"]) {
+            preserved[key] = JSON.parse(JSON.stringify(settings.get(key)));
+        }
         try {
             const value = await Promise.race([
                 Promise.resolve().then(function () { return t.run(o); }),
-                new Promise(function (_, reject) { setTimeout(function () { reject(new Error("超时 " + limit + "ms")); }, limit); }),
+                new Promise(function (_, reject) { timer = setTimeout(function () { reject(new Error("超时 " + limit + "ms")); }, limit); }),
             ]);
             if (value && typeof value === "object" && "ok" in value) { ok = !!value.ok; detail = String(value.detail || ""); }
             else if (typeof value === "string") { ok = true; detail = value; }   // 用例自身没给判定时，默认通过但会标注
@@ -1600,6 +1622,10 @@ async function runSelfTest(options) {
         } catch (error) {
             detail = "异常：" + (error && error.message ? error.message : String(error));
             ok = false;
+        } finally {
+            if (timer !== null) clearTimeout(timer);
+            setContext(previousContext);
+            settings.save(preserved);
         }
         // 详情单行化并截断：报告要能一眼看完
         const oneLine = String(detail).replace(/\s+/g, " ").trim().slice(0, 68);
@@ -1640,7 +1666,7 @@ const TOOLS = [
     { name: "get_yugioh_card_art", displayName: "查询异画版本", action: "art", description: "列出某张卡出过的异画/不同卡图版本", params: { query: ["string", "卡名", true] } },
     { name: "list_yugioh_alt_art_cards", displayName: "列出所有异画卡", action: "artlist", description: "列出本地索引里全部有异画的卡（共 125 张），想知道哪些卡有多个卡图版本时使用", params: { limit: ["number", "返回条数", false] } },
     { name: "find_yugioh_series_cards", displayName: "查询系列卡表", action: "series", description: "列出某个系列/字段包含的卡（「这个系列有哪些卡」）", params: { series: ["string", "系列名或字段", true] } },
-    { name: "get_yugioh_banlist", displayName: "查询禁限卡表", action: "banlist", description: "查询游戏王禁限卡表。带 query（卡名或卡密）时精确回答这张卡属于禁止/限制/准限制/无限制哪一档；不带 query 时返回整张表（含无限制说明）。判断某卡能否投入、组牌校验时用它，不要凭记忆", params: { query: ["string", "卡名或 8 位卡密（留空＝返回整张表）", false], region: ["string", "区域 cn/ja/en，默认 cn", false] } },
+    { name: "get_yugioh_banlist", displayName: "查询禁限卡表", action: "banlist", description: "查询游戏王禁限卡表。带 query（卡名或卡密）时精确回答这张卡属于禁止/限制/准限制/无限制哪一档；不带 query 时返回整张表。默认遵循面板设置；无限制模式不套用地区禁限表，仍保留卡组数量和同名最多3张。判断某卡能否投入、组牌校验时用它，不要凭记忆", params: { query: ["string", "卡名或 8 位卡密（留空＝返回整张表）", false], region: ["string", "区域 cn/ja/en；none＝无禁限规则，省略时使用面板设置", false] } },
     { name: "open_yugioh_pack", displayName: "开卡包", action: "pack", description: "开真实卡包（按该包首发卡池抽卡）", params: { pack: ["string", "卡包名", false], count: ["number", "抽几张", false], region: ["string", "地区 sc/jp/en", false] } },
     { name: "list_yugioh_packs", displayName: "查询卡包列表", action: "packlist", description: "按关键词查卡包列表（发售时间倒序）", params: { keyword: ["string", "关键词", false], region: ["string", "地区", false] } },
     { name: "search_yugioh_packs", displayName: "查询系列对应卡包", action: "packsearch", description: "查某个系列出过哪些真实卡包", params: { keyword: ["string", "系列名", true] } },
@@ -1737,6 +1763,7 @@ function registerTools() {
     // 识别严格程度（面板/脚本/对外接口共用）：YgoCardLookupV2.call("strictness", { level: "strict|normal|loose" })
     try {
         registry.provide("runAction:strictness", async function (args) {
+            if (args && args.action && args.action !== "strictness") return [];
             const key = String((args && (args.level || args.value)) || "normal").trim().toLowerCase();
             // 与 panel.js 的 applyStrictness 同一套别名（含 "3"/"1" 数字档），避免两处实现不一致
             const value = (key === "strict" || key === "最严格" || key === "3") ? "strict"
@@ -1775,6 +1802,7 @@ __def("src/core/bus.js", function (__req) {
 /** 唯一宿主接触点：模块通过 ctx() 取酒馆上下文，不在模块顶层触碰全局。 */
 let injected = null;
 function setContext(context) { injected = context; }
+function contextOverride() { return injected; }
 function ctx() {
     if (injected) return injected;
     if (typeof SillyTavern !== "undefined" && SillyTavern.getContext) return SillyTavern.getContext();
@@ -1820,7 +1848,7 @@ function log(tag, message) {
 }
 function logLines() { return buffer.slice(); }
 
-return { setContext, ctx, on, emit, LOG_LIMIT, setLogEnabled, setLogVerbose, log, logLines };
+return { setContext, contextOverride, ctx, on, emit, LOG_LIMIT, setLogEnabled, setLogVerbose, log, logLines };
 });
 
 __def("src/core/events.js", function (__req) {
@@ -1864,17 +1892,17 @@ async function mountEvents(hooks) {
         if (!key || typeof fn !== "function") return;
         try { src.on(key, fn); mounted++; } catch (error) { console.warn("[YGO2] 事件挂载失败 " + name, error); }
     };
-    on("APP_READY", function () { if (h.onReady) h.onReady(); });
-    on("CHAT_CHANGED", function () { if (h.onChatChanged) h.onChatChanged(); emit("chatChanged", {}); });
-    on("MESSAGE_SENT", function (id) { if (h.onMessageSent) h.onMessageSent(id); });
-    on("MESSAGE_SENT", function () { if (h.onMessageSentFallback) h.onMessageSentFallback(); });   // 兜底注入（v1「拦截器不生效时改用事件兜底」同语义）
+    on("APP_READY", function () { if (h.onReady) return h.onReady(); });
+    on("CHAT_CHANGED", async function () { if (h.onChatChanged) await h.onChatChanged(); emit("chatChanged", {}); });
+    on("MESSAGE_SENT", function (id) { if (h.onMessageSent) return h.onMessageSent(id); });
+    on("MESSAGE_SENT", function () { if (h.onMessageSentFallback) return h.onMessageSentFallback(); });
     // ★ v1 的兜底通道：桌面客户端（tt）不执行 manifest 的 generate_interceptor，
     //   也不触发 CHAT_COMPLETION_PROMPT_READY；这个事件在**提示词组装前**触发，
     //   在这里改 ctx().chat 的最后一条消息，改动会真的进入本次发送。
-    on("GENERATION_AFTER_COMMANDS", function (type) { if (h.onAfterCommands) h.onAfterCommands(type); });
-    on("MESSAGE_RECEIVED", function (id) { if (h.onMessageReceived) h.onMessageReceived(id); });
-    on("GENERATION_ENDED", function () { if (h.onGenerationEnded) h.onGenerationEnded(); });
-    on("SETTINGS_UPDATED", function () { if (h.onSettingsUpdated) h.onSettingsUpdated(); });
+    on("GENERATION_AFTER_COMMANDS", function (type) { if (h.onAfterCommands) return h.onAfterCommands(type); });
+    on("MESSAGE_RECEIVED", function (id) { if (h.onMessageReceived) return h.onMessageReceived(id); });
+    on("GENERATION_ENDED", async function () { if (h.onGenerationEnded) await h.onGenerationEnded(); emit("generationEnded", {}); });
+    on("SETTINGS_UPDATED", function () { if (h.onSettingsUpdated) return h.onSettingsUpdated(); });
     log("事件", "已挂载 " + mounted + " 个事件");
     // 发送体改写钩子（官方 CHAT_COMPLETION_PROMPT_READY）：注册表里有人装才挂，失败不影响其它事件
     try {
@@ -2346,7 +2374,7 @@ const DEFAULTS = {
     summonAutoApply: true,       // 召唤检查通过时自动落到决斗盘（祭品送墓、怪兽上场、用掉本回合通招）
     isolateCommand: false,      // 隔离：勾上后只有指令（/ygo…）触发，一切自动检测/自然语言触发都不生效
     groupsDisabled: [],         // 栏目隔离：列在这里的栏目整体停用（自动检测注入/提示词/查询内容/外部接口/玩法/联动/日志/查看）
-    diyFrameMode: "real",        // DIY 卡面：css 自绘 / real 真实卡框 PNG（素材在 assets/yugioh/）
+    diyFrameMode: "real",        // DIY 卡面：css 自绘 / real 真实卡框 WebP（素材在 assets/yugioh/）
     diyFrameBase: "",           // 自定义卡框目录（留空＝用自带素材）           // 聊天里卡图最大宽度（像素）
     collection: {},
     collectionTotal: 0,
@@ -2424,12 +2452,21 @@ function groupEnabled(name) {
 
 /** 供界面层判断"这个动作属于哪个栏目"（触发词/命令共用） */
 const ACTION_GROUP = {
-    card: "查询内容", search: "查询内容", rule: "查询内容", art: "查询内容", alias: "查询内容", recap: "查询内容",
-    pack: "玩法", draw: "玩法", shop: "玩法", buy: "玩法", deck: "玩法", hand: "玩法", board: "玩法", duel: "玩法", diy: "玩法",
+    card: "查询内容", search: "查询内容", rule: "查询内容", ruling: "查询内容", banlist: "查询内容", series: "查询内容", art: "查询内容", alias: "查询内容", recap: "查询内容",
+    pack: "玩法", packlist: "玩法", packsearch: "玩法", draw: "玩法", shop: "玩法", buy: "玩法", deck: "玩法", deckimage: "玩法", hand: "玩法", summon: "玩法", collection: "玩法", album: "玩法", board: "玩法", duel: "玩法", diy: "玩法",
     log: "日志", selftest: "日志",
 };
 function actionGroup(action) { return ACTION_GROUP[String(action || "")] || ""; }
-function actionAllowed(action) { const g = actionGroup(action); return g ? groupEnabled(g) : true; }
+function actionAllowed(action, source) {
+    const g = actionGroup(action);
+    if (!g) return true;
+    // 用户指令仍遵循显式栏目停用，但不受自动触发总隔离影响。
+    if (source === "command") {
+        const off = get("groupsDisabled");
+        return !(Array.isArray(off) && off.indexOf(g) >= 0);
+    }
+    return groupEnabled(g);
+}
 
 const settings = {
     KEY: KEY,
@@ -4158,8 +4195,8 @@ const RULES = { mainMin: 40, mainMax: 60, extraMax: 15, sideMax: 15, sameNameMax
  */
 function extractDeckBlock(text) {
     const raw = String(text === undefined || text === null ? "" : text).replace(/＜/g, "<").replace(/＞/g, ">");
-    const m = /<(?:deck|卡组|牌组)\b[^>]*>([\s\S]*?)<\/(?:deck|卡组|牌组)\s*>/i.exec(raw);
-    return m ? String(m[1]).trim() : "";
+    const m = /<(deck|卡组|牌组)(?=\s|>)[^>]*>([\s\S]*?)<\/\1\s*>/i.exec(raw);
+    return m ? String(m[2]).trim() : "";
 }
 
 /** 从聊天记录里找最近的 <deck> 块（从最新一条往前找，最多看 limit 条） */
@@ -4170,7 +4207,6 @@ function deckFromChat(chat, limit) {
         const msg = list[i];
         if (!msg || typeof msg !== "object") continue;
         const body = String(msg.mes !== undefined ? msg.mes : (msg.content !== undefined ? msg.content : ""));
-        if (body.indexOf("deck") < 0 && body.indexOf("<卡组") < 0 && body.indexOf("<牌组") < 0) continue;
         const block = extractDeckBlock(body);
         if (block) { log("卡组", "从第 " + (i + 1) + " 条消息的 <deck> 块读到卡表（" + block.split("\n").filter(Boolean).length + " 行）"); return block; }
     }
@@ -4181,7 +4217,7 @@ function deckFromChat(chat, limit) {
 function deckArgText(args) {
     // 参数可以是 {deck} 对象，也可以直接是卡表字符串（deckimage 里就是传字符串）
     const own = String((typeof args === "string" ? args : ((args && (args.deck || args.text)) || ""))).trim();
-    if (own) return { text: own, fromChat: false };
+    if (own) return { text: extractDeckBlock(own) || own, fromChat: false };
     const c = ctx();
     const fromChat = deckFromChat(c && c.chat);
     return { text: fromChat, fromChat: !!fromChat };
@@ -4197,10 +4233,10 @@ function parseDeckText(text) {
         if (/^(#+\s*)?(副卡组|副|side)$/i.test(line)) { bucket = "side"; continue; }
         if (line[0] === "#" || line[0] === "!") continue;
         let count = 1, name = line;
-        let m = /^(\d+)\s*[x×*]?\s*(.+)$/.exec(line);
+        let m = /^(\d{1,2})(?:\s*[x×*]\s*|\s+|(?=[^\d\s]))(.+)$/.exec(line);
         if (m) { count = Number(m[1]) || 1; name = m[2].trim(); }
         else { m = /^(.+?)\s*[x×*]\s*(\d+)$/.exec(line); if (m) { name = m[1].trim(); count = Number(m[2]) || 1; } }
-        name = name.replace(/^\d+\s*[x×*]?\s*/, "").trim();
+        name = name.trim();
         if (!name) continue;
         out[bucket].push({ name: name, count: Math.max(1, Math.min(99, count)) });
     }
@@ -4243,9 +4279,10 @@ function deckProblems(deck, limits, region) {
 /** 禁限检查需要卡库（单独一步，避免离线时整块失败） */
 async function banlistProblems(merged, limits, region) {
     const out = [];
+    if (region === "none") return out;
     const stats = await getStatsIndex();
     for (const entry of merged.values()) {
-        const row = stats.byName.get(normalizeKey(entry.name));
+        const row = stats.byId.get(String(entry.name)) || stats.byName.get(normalizeKey(entry.name));
         if (!row) { out.push("「" + entry.name + "」在本地卡库里找不到（译名可能有出入）"); continue; }
         const r = (limits || {})[region] || (limits || {}).cn;
         if (!r) continue;
@@ -4259,6 +4296,7 @@ async function banlistProblems(merged, limits, region) {
 
 /** 区域显示名（面板「查询内容 → 禁限表区域」用哪块表就显示哪块） */
 function regionNameOf(region) {
+    if (region === "none") return "无限制（无禁限规则）";
     return region === "ja" || region === "jp" ? "OCG 日文" : region === "en" ? "TCG 英文" : "官方简中";
 }
 function validateDeckText(deck, limits, region) {
@@ -4348,7 +4386,7 @@ async function handText(args) {
     const stats = await getStatsIndex();
     const pool = [];
     for (const e of deck.main) {
-        const row = stats.byName.get(normalizeKey(e.name));
+        const row = stats.byId.get(String(e.name)) || stats.byName.get(normalizeKey(e.name));
         if (row) for (let i = 0; i < e.count; i++) pool.push(row);
     }
     if (!pool.length) return "卡表里没有能在本地卡库匹配到的卡（请检查译名）。";
@@ -4384,8 +4422,11 @@ function registerDeck() {
         const region = settings.get("banlistRegion") || "cn";
         const base = validateDeckText(deck, null, region);
         let text = base.text;
-        try {
+        if (region === "none") {
+            text += "\n\nℹ️ 无限制（无禁限规则）：不套用地区禁限表，仍检查卡组张数与同名卡最多 3 张。";
+        } else try {
             const limits = await getLimits();
+            if (!limits[region] || !limits[region].date) throw new Error("禁限表不可用");
             const extra = await banlistProblems(base.base.merged, limits, region);
             const unknown = extra.filter(function (x) { return x.indexOf("找不到") >= 0; });
             const real = extra.filter(function (x) { return x.indexOf("找不到") < 0; });
@@ -4400,7 +4441,7 @@ function registerDeck() {
     registry.provide("runAction:deck", async function (trigger) {
         const a = trigger && trigger.action;
         if (a === "series") return [{ name: "系列卡表", text: await seriesText(trigger.arg) }];
-        if (a === "deck") return [];
+        if (a === "deck") return [{ name: "卡组校验", text: await registry.call("tool:deck", { deck: trigger.arg }) }];
         return [];
     });
     // ★ 自然语言触发词「起手模拟 / 起手概率」：读聊天里的 <deck> 卡表（与 /ygohand 同一套逻辑）。
@@ -4411,7 +4452,7 @@ function registerDeck() {
         const deck = parseDeckText(picked.text);
         if (!deck.main.length) return [{ name: "起手模拟", text: "要模拟起手的话，先把卡组贴出来（每行「3 卡名」），或写成 <deck>…</deck> 块发一条消息。" }];
         const arg = String(trigger.arg || "").trim();
-        const draw = /^d{1,3}$/.test(arg) ? Number(arg) : undefined;
+        const draw = /^\d{1,3}$/.test(arg) ? Number(arg) : undefined;
         return [{ name: "起手模拟", text: await handText({ deck: picked.text, draw: draw }) }];
     });
     log("数据", "卡组能力已注册（deck/hand/series）");
@@ -4675,12 +4716,14 @@ const getReleaseRows = lazyIndex(async function () {
         });
     } catch (error) {
         log("数据", "卡包发售表取不到（" + (error && error.message ? error.message : error) + "）：卡包功能暂时退化为按本地卡库随机抽卡");
+        getReleaseRows.reset();
         return [];
     }
 });
 const getPackIndex = lazyIndex(async function () {
     const rows = await getReleaseRows();
     const index = buildPackIndex(rows);
+    if (!index.length) getPackIndex.reset();
     log("数据", "卡包索引已建立：" + index.length + " 个卡包");
     return index;
 });
@@ -4854,7 +4897,7 @@ async function runAction(trigger) {
     const action = trigger && trigger.action;
     const arg = trigger && trigger.arg;
     if (action === "pack") return [{ name: "开卡包", text: await openPackText({ pack: arg }) }];
-    if (action === "draw") return [{ name: "抽卡", text: await drawText({ count: 2 }) }];
+    if (action === "draw") return [{ name: "抽卡", text: await drawText({ count: /^\d{1,3}$/.test(String(arg || "").trim()) ? Number(arg) : 2 }) }];
     if (action === "packsearch") {
         // 没有关键词就明确问回去，绝不替用户猜一个卡名（曾经这里写死 "青眼"，导致查什么都是青眼）
         if (!String(arg || "").trim()) return [{ name: "卡包查询", text: "想查哪个系列的卡包？例如「白银城卡包有哪些」或「查卡包 黑魔导」。" }];
@@ -4929,8 +4972,8 @@ const { findCard, cardDetail } = __req("src/data/cards.js");
 /** 1) 常量 */
 const LIMITS_URL = "https://ygocdb.com/api/v0/limits.json";
 const CARD_DETAIL_URL = "https://ygocdb.com/api/v0/card/";
-const REGIONS = ["cn", "ja", "en"];
-const REGION_LABEL = { cn: "官方简中", ja: "OCG 日文", en: "TCG 英文" };
+const REGIONS = ["cn", "ja", "en", "none"];
+const REGION_LABEL = { cn: "官方简中", ja: "OCG 日文", en: "TCG 英文", none: "无限制（无禁限规则）" };
 const STATUS_TEXT = { forbidden: "禁止卡", limited: "限制 1 张", semi: "准限制 2 张", none: "无限制" };   // none 也要有中文标签（否则对外返回 label:"none"）
 
 let fetchImpl = null;
@@ -4963,9 +5006,11 @@ function parseLimits(json) {
 
 /** 查禁限状态：同时接受 CID 与 8 位密码 */
 function banlistStatus(limits, region, row) {
-    if (!limits || !row) return "unknown";
+    if (!row) return "unknown";
+    if (region === "none") return "none";
+    if (!limits) return "unknown";
     const r = limits[region] || limits.cn;
-    if (!r) return "unknown";
+    if (!r || !r.date) return "unknown";
     const keys = [String(row.cid || ""), String(row.id || "")].filter(Boolean);
     for (const key of keys) {
         if (r.forbidden.has(key)) return "forbidden";
@@ -5003,9 +5048,10 @@ async function summonText(args) {
     if (!need.legal) lines.push("❌ 不能这样出场：" + need.reason);
     else lines.push(need.tributes ? "需要祭品：" + need.tributes + " 只（" + need.reason + "）" : "✅ 可以直接通常召唤（" + need.reason + "）");
     try {
-        const limits = await getLimits();
-        const status = banlistStatus(limits, "cn", row);
-        if (status !== "unknown" && status !== "none") lines.push("⚠️ 禁限状态（" + REGION_LABEL.cn + "）：" + STATUS_TEXT[status]);
+        const region = settings.get("banlistRegion") || "cn";
+        const limits = region === "none" ? null : await getLimits();
+        const status = banlistStatus(limits, region, row);
+        if (status !== "unknown" && status !== "none") lines.push("⚠️ 禁限状态（" + REGION_LABEL[region] + "）：" + STATUS_TEXT[status]);
     } catch (error) { /* 禁限表不可用不影响主判定 */ }
     lines.push("", "（本判定只覆盖通常召唤的祭品数与禁限状态；特殊召唤的素材要求请用官方裁定确认。）");
     return lines.join("\n");
@@ -5018,14 +5064,20 @@ async function summonText(args) {
  *   banlistText(null, query)    → 只查这一张卡的状态（会明确回答"无限制"，不再让 AI 自己推断）
  */
 async function banlistText(region, query) {
-    const limits = await getLimits();
     const key = REGIONS.indexOf(region || settings.get("banlistRegion") || "cn") >= 0 ? (region || settings.get("banlistRegion") || "cn") : "cn";
+    if (key === "none") {
+        const note = "无限制（无禁限规则）：不套用任何地区的禁限表；仍检查卡组张数与同名卡合计最多 3 张。";
+        if (!query) return note;
+        const st = await banlistStatusOf(query, key);
+        return "禁限状态：" + String(query).trim() + " —— " + st.label + "\n" + note;
+    }
+    const limits = await getLimits();
     const data = limits[key];
-    if (!data) return "未能获取禁限卡表。";
+    if (!data || !data.date) return "未能获取禁限卡表，请检查网络后重试；本次无法判定禁限状态。";
     const label = REGION_LABEL[key] || key;
     // 指定了卡名/卡密 → 只回这一张（含"无限制"）
     if (query) {
-        const st = await banlistStatusOf(query);
+        const st = await banlistStatusOf(query, key);
         const name = String(query).trim();
         if (st.status === "unknown") return "禁限查询：" + name + " —— " + (st.label || "查询失败") + "。";
         const note = st.status === "none"
@@ -5215,9 +5267,14 @@ async function crossRulingText(args) {
 const getLimits = lazyIndex(async function () {
     // 以前这里直接 await doFetch：断网/接口挂了就抛出去，/ygodeck 与禁限查询整个报错。
     // 现在退化成空表（"未能获取禁限卡表"），其它本地判定照常。
-    try { return parseLimits(await doFetch(LIMITS_URL, 20000)); }
+    try {
+        const limits = parseLimits(await doFetch(LIMITS_URL, 20000));
+        if (!Object.keys(limits).some(function (key) { return !!limits[key].date; })) throw new Error("禁限表为空");
+        return limits;
+    }
     catch (error) {
         log("数据", "禁限表取不到（" + (error && error.message ? error.message : error) + "）：禁限相关判定暂时不可用");
+        getLimits.reset();
         return emptyLimits();
     }
 });
@@ -5227,7 +5284,7 @@ const getLimits = lazyIndex(async function () {
 async function runAction(trigger) {
     const action = trigger && trigger.action;
     const arg = (trigger && trigger.arg) || "";
-    if (action === "banlist") return [{ name: arg ? "禁限状态" : "禁限卡表", text: await banlistText("cn", arg) }];
+    if (action === "banlist") return [{ name: arg ? "禁限状态" : "禁限卡表", text: await banlistText(null, arg) }];
     if (action === "rule") {
         if (!arg) return [];
         const text = await rulingText({ query: arg, limit: 3 });
@@ -5237,14 +5294,16 @@ async function runAction(trigger) {
 }
 
 /** 单卡禁限状态（面板「查询内容 → 禁限状态」用）：返回 {status, label, region} */
-async function banlistStatusOf(query) {
+async function banlistStatusOf(query, regionOverride) {
     const row = await findCard(query);
     if (!row) return { status: "unknown", label: "未找到这张卡", region: "" };
-    const region = settings.get("banlistRegion") || "cn";
+    const selected = regionOverride || settings.get("banlistRegion") || "cn";
+    const region = REGIONS.indexOf(selected) >= 0 ? selected : "cn";
+    if (region === "none") return { status: "none", label: STATUS_TEXT.none, region: REGION_LABEL.none };
     try {
         const limits = await getLimits();
         const status = banlistStatus(limits, region, row);
-        return { status: status, label: STATUS_TEXT[status] || status, region: REGION_LABEL[region] || region };
+        return { status: status, label: status === "unknown" ? "禁限表不可用" : (STATUS_TEXT[status] || status), region: REGION_LABEL[region] || region };
     } catch (error) { return { status: "unknown", label: "禁限表不可用", region: region }; }
 }
 
@@ -5532,8 +5591,8 @@ async function checkSummon(args) {
     const judge = await judgeSummon(row, method, {});
     // 禁限提醒
     try {
-        const limits = await getLimits();
         const region = settings.get("banlistRegion") || "cn";
+        const limits = region === "none" ? null : await getLimits();
         const status = banlistStatus(limits, region, row);
         if (status !== "unknown" && status !== "none") judge.verdicts.push("⚠️ 禁限状态（" + (REGION_LABEL[region] || region) + "）：" + STATUS_TEXT[status]);
     } catch (error) { /* 禁限表不可用不影响判定 */ }
@@ -5909,7 +5968,7 @@ return { looksLikeCardArg, TRIGGERS, HESITATION, normalize, normalizeText, CARD_
 });
 
 __def("src/inject/interceptor.js", function (__req) {
-const { ctx, log, emit } = __req("src/core/bus.js");
+const { ctx, log, emit, on } = __req("src/core/bus.js");
 const { settings } = __req("src/core/settings.js");
 const { registry } = __req("src/core/registry.js");
 const { matchTrigger, findSegments, allowsFreeText, CARD_ARG_ACTIONS } = __req("src/inject/detect.js");
@@ -5968,6 +6027,36 @@ async function buildExternalSystem(conf, cards, question) {
 
 /** 拦截器最近一次被宿主调用的时间（兜底注入据此判断） */
 let lastRunAt = 0;
+let lastMessage = null;
+let lastMessageText = "";
+let lastMetadata = null;
+let lastType = "";
+let lastResult = "";
+let inFlight = null;
+let runRevision = 0;
+
+function messageKey(chat) {
+    const list = Array.isArray(chat) ? chat : [];
+    for (let i = list.length - 1; i >= 0; i--) {
+        const m = list[i];
+        if (m && m.is_user) return { message: m, text: String(m.mes || "").split("\n\n【查卡器资料】")[0] };
+    }
+    return { message: null, text: "" };
+}
+
+function automaticEnabled() {
+    return settings.get("interceptEnabled") !== false && settings.groupEnabled("自动检测注入") && !settings.isolationActive() && settings.get("triggerMode") !== "command";
+}
+
+function resetRun() {
+    runRevision++;
+    lastRunAt = 0;
+    lastMessage = null;
+    lastMessageText = "";
+    inFlight = null;
+    lastResult = "";
+    if (registry.has("writeInjection")) registry.call("writeInjection", "").catch(function () {});
+}
 
 /** 兜底注入：宿主没有调用拦截器（不支持 generate_interceptor / 调用失败）时，
  *  在 MESSAGE_SENT（玩家消息已入楼、提示词还没组装）用**同一个拦截器**再跑一次 ——
@@ -5975,20 +6064,23 @@ let lastRunAt = 0;
  *  v1 的「拦截器不生效时改用事件兜底注入」就是这个语义。 */
 async function runFallback() {
     if (settings.get("injectionFallback") === false) return { ok: false, reason: "设置里已关闭兜底注入" };
-    if (lastRunAt && Date.now() - lastRunAt < 5000) return { ok: false, reason: "拦截器本轮已运行（" + (Date.now() - lastRunAt) + "ms 前），不需要兜底" };
     const c = (typeof ctx === "function") ? ctx() : null;
     const chat = (c && Array.isArray(c.chat)) ? c.chat : null;
     if (!chat || !chat.length) return { ok: false, reason: "拿不到聊天记录" };
     if (typeof builtInterceptor !== "function") return { ok: false, reason: "拦截器尚未建立" };
-    const before = lastRunAt;
+    const key = messageKey(chat);
+    if (key.message === lastMessage && key.text === lastMessageText && c.chatMetadata === lastMetadata && lastType === "normal") {
+        if (inFlight) {
+            const out = await inFlight;
+            return { ok: true, injected: !!out, chars: String(out || "").length };
+        }
+        if (lastRunAt && Date.now() - lastRunAt < 5000 && automaticEnabled()) return { ok: false, reason: "本条消息的拦截器已运行，不需要重复兜底" };
+    }
     try {
         const out = await builtInterceptor(chat, 0, null, "normal");
         return { ok: true, injected: !!out, chars: String(out || "").length };
     } catch (error) {
         return { ok: false, reason: "兜底注入失败：" + ((error && error.message) ? error.message : String(error)) };
-    } finally {
-        // 无论成功失败，都别让同一轮反复兜底
-        if (!lastRunAt || lastRunAt === before) lastRunAt = Date.now();
     }
 }
 
@@ -5997,11 +6089,17 @@ let builtInterceptor = null;
 
 function registerInterceptorHooks() {
     registry.provide("injectFallback:run", async function () { return await runFallback(); });
+    on("chatChanged", resetRun);
+    on("generationEnded", resetRun);
+    on("settings", function () { if (!automaticEnabled()) resetRun(); });
 }
 
 function createInterceptor() {
-    const interceptor = async function (chat, contextSize, abort, type) {
+    const interceptor = async function (chat, contextSize, abort, type, revision) {
         lastRunAt = Date.now();   // 标记"拦截器本轮确实被宿主调用了"，兜底注入据此判断是否需要出手
+        const metadata = ctx().chatMetadata;
+        // 同 id 的提示词会跨轮保存；无命中、关闭或异常时都不能留下旧资料。
+        if (registry.has("writeInjection")) await registry.call("writeInjection", "");
         try { log("拦截", "被调用（chat " + ((chat && chat.length) || 0) + " 条，type=" + String(type || "") + "）"); } catch (e0) { /* 忽略 */ }
         const conf = settings.all();
         if (!conf.interceptEnabled) return;
@@ -6087,9 +6185,10 @@ function createInterceptor() {
         if (!injection) return;
         // 外部钩子：允许别的脚本过滤/改写注入内容（v1 hooks.filterInjection 同义）
         if (registry.has("hook:filterInjection")) {
-            try { const f = await registry.call("hook:filterInjection", injection); if (typeof f === "string" && f) injection = f; }
+            try { const f = await registry.call("hook:filterInjection", injection); if (typeof f === "string") injection = f; }
             catch (error) { log("拦截", "filterInjection 钩子出错（已忽略）"); }
         }
+        if (!injection) return "";
         // 卡图页脚：预算截断发生在 buildInjection 内部，页脚在其后追加，所以卡图链接【不会被切】；
         // 外部 AI 独占模式（本地卡面被丢弃）时，这一段也保证卡图照样送到 AI。
         if (conf.includeImage !== false && detectedCards.length) {
@@ -6107,7 +6206,8 @@ function createInterceptor() {
                 }
             } catch (error) { /* 卡图页脚失败不影响注入 */ }
         }
-        const written = await registry.has("writeInjection") ? await registry.call("writeInjection", injection) : false;
+        if (revision !== runRevision || metadata !== ctx().chatMetadata || !automaticEnabled()) return "";
+        const written = registry.has("writeInjection") ? await registry.call("writeInjection", injection) : false;
         log("注入", cards.length + " 张卡 → " + injection.length + " 字（" + kind + "，" + (Date.now() - started) + "ms）写入=" + written);
         if (conf.logToast === true) {
             try { const toaster = ctx().toastr || (typeof toastr !== "undefined" ? toastr : null); if (toaster && typeof toaster.info === "function") toaster.info("查卡器：已注入 " + cards.length + " 张卡资料"); } catch (error) { /* 忽略 */ }
@@ -6128,11 +6228,34 @@ function createInterceptor() {
     };
         // 对外包一层"永不抛错"：拦截器里任何异常都不许影响生成（宁可没注入，也不能让玩家发不出去）
         const safeInterceptor = async function (chat, contextSize, abort, type) {
-            try { return await interceptor(chat, contextSize, abort, type); }
+            let key = messageKey(chat);
+            const hostKey = messageKey(ctx().chat);
+            if (hostKey.message && hostKey.text === key.text) key = hostKey;
+            const runType = String(type || "normal");
+            if (key.message && key.message === lastMessage && key.text === lastMessageText && ctx().chatMetadata === lastMetadata && runType === lastType && automaticEnabled()) {
+                if (inFlight) return await inFlight;
+                if (lastRunAt && Date.now() - lastRunAt < 5000) return lastResult;
+            }
+            const revision = ++runRevision;
+            lastMessage = key.message;
+            lastMessageText = key.text;
+            lastMetadata = ctx().chatMetadata;
+            lastType = runType;
+            const pending = interceptor(chat, contextSize, abort, type, revision).catch(function (error) {
+                log("拦截", "⚠️ 拦截器内部出错，已忽略、不影响生成：" + (error && error.message ? error.message : error));
+                return "";
+            });
+            inFlight = pending;
+            try {
+                const result = await pending;
+                if (revision === runRevision) { lastResult = result; lastRunAt = Date.now(); }
+                return result;
+            }
             catch (error) {
                 try { log("拦截", "⚠️ 拦截器内部出错，已忽略、不影响生成：" + (error && error.message ? error.message : error)); } catch (e1) { /* 忽略 */ }
                 return "";
             }
+            finally { if (inFlight === pending) inFlight = null; }
         };
         builtInterceptor = safeInterceptor;
     return safeInterceptor;
@@ -6141,7 +6264,7 @@ function createInterceptor() {
 /** 供面板/命令复用的单次检测（不写入提示词）。 */
 async function detectOnce(text) {
     const trigger = matchTrigger(text);
-    if (trigger && registry.has("runAction")) return { kind: "trigger:" + trigger.action, cards: await registry.call("runAction", trigger) };
+    if (trigger) return { kind: "trigger:" + trigger.action, cards: await runTrigger(trigger) };
     if (allowsFreeText() && registry.has("resolveCards")) return { kind: "freetext", cards: await registry.call("resolveCards", text) };
     return { kind: "none", cards: [] };
 }
@@ -6301,7 +6424,10 @@ async function handlePromptReady(eventData) {
     if (!eventData || eventData.dryRun === true) return 0;                // 预览/计数不算真发送
     const chat = eventData.chat;
     if (!Array.isArray(chat) || !chat.length) return 0;
-    try { if (typeof settings.isolationActive === "function" && settings.isolationActive()) return 0; } catch (error) { /* 没有该能力就继续 */ }
+    if (settings.isolationActive() || !settings.groupEnabled("自动检测注入") || !settings.groupEnabled("查询内容")) {
+        stripMarker(chat);
+        return 0;
+    }
     const mode = String(settings.get("bodyEditMode") || "off");
     if (mode !== "append") { const n = stripMarker(chat); if (n) log("发送体", "已清掉上一轮追加的资料 " + n + " 处"); return 0; }
     const block = await buildBlock(chat);
@@ -6320,39 +6446,14 @@ function installSendBody(source, eventTypes, name) {
     // ① 官方 ST 钩子（真正基于 SillyTavern 生成链路时有效）
     try {
         source.on(mapped(key), function (eventData) {
-            Promise.resolve(handlePromptReady(eventData)).catch(function (error) {
+            return Promise.resolve(handlePromptReady(eventData)).catch(function (error) {
                 log("发送体", "处理失败（不影响发送）：" + (error && error.message ? error.message : error));
             });
         });
         mounted++;
         log("发送体", "已挂上发送体钩子：" + mapped(key));
     } catch (error) { log("发送体", "官方钩子挂载失败（不影响发送）：" + (error && error.message ? error.message : error)); }
-    // ② v1 的兜底通道：桌面客户端（tt）既不执行 generate_interceptor、也不触发上面的官方钩子，
-    //    只在 GENERATION_AFTER_COMMANDS（提示词组装前）与 MESSAGE_SENT 触发 —— 资料必须在这里追加才进本次发送。
-    const runChannel = function (label) {
-        try {
-            const c = ctx();
-            const chat = (c && Array.isArray(c.chat)) ? c.chat : null;
-            if (!chat || !chat.length) return;
-            Promise.resolve(handlePromptReady({ chat: chat })).then(function (n) {
-                if (n) log("发送体", label + "：已把资料追加进即将发送的消息（" + n + " 处）");
-                if (registry.has("injectFallback:run")) {
-                    return registry.call("injectFallback:run").then(function (r) {
-                        if (r && r.ok) log("兜底", label + " 兜底注入 " + r.chars + " 字");
-                    });
-                }
-            }).catch(function (error) {
-                log("发送体", label + " 处理失败（不影响发送）：" + (error && error.message ? error.message : error));
-            });
-        } catch (error) { try { log("发送体", label + " 异常（不影响发送）：" + (error && error.message ? error.message : error)); } catch (e2) { /* 忽略 */ } }
-    };
-    for (const k of ["GENERATION_AFTER_COMMANDS", "MESSAGE_SENT"]) {
-        try {
-            source.on(mapped(k), function (a) { if (String(a || "") === "quiet") return; runChannel(mapped(k)); });
-            mounted++;
-            log("发送体", "已挂兜底通道：" + mapped(k));
-        } catch (error) { log("发送体", "兜底通道挂载失败：" + mapped(k)); }
-    }
+    // MESSAGE_SENT / GENERATION_AFTER_COMMANDS 由入口统一处理，避免同轮重复执行。
     return mounted > 0;
 }
 
@@ -6437,7 +6538,7 @@ const ARROWS = ["左上", "上", "右上", "左", "右", "左下", "下", "右�
 const SPELL_SUBTYPES = ["通常", "永续", "装备", "速攻", "场地", "仪式"];
 const TRAP_SUBTYPES = ["通常", "永续", "反击"];
 const ATTR_COLOR = { 光: "#e8d24a", 暗: "#7a4fa8", 地: "#8a6a3a", 水: "#3a7ac8", 炎: "#c8483a", 风: "#3aa86a", 神: "#d8a02a" };
-/** 各卡种的边框配色（CSS 卡框用；真实 PNG 素材缺失时的主路径） */
+/** 各卡种的边框配色（CSS 卡框用；真实卡框素材缺失时回退） */
 const FRAME_STYLE = {
     通常: { edge: "#c9a227", bg: "#f0e2b0" }, 效果: { edge: "#c8722a", bg: "#f6e0c0" },
     仪式: { edge: "#2f6fb0", bg: "#dbe6f4" }, 融合: { edge: "#8a5aa8", bg: "#e8dcf2" },
@@ -6460,8 +6561,7 @@ function typeLine(card) {
     const sub = String(c.subtype || "").trim();
     if (isSpell) return "【魔法卡" + (sub ? "／" + sub : "") + "】";
     if (isTrap) return "【陷阱卡" + (sub ? "／" + sub : "") + "】";
-    const isPend = c.frame === "灵摆";
-    const parts = [String(c.race || "？") + "族", isPend ? "灵摆" : "", String(c.frame || "效果")].filter(Boolean);
+    const parts = [String(c.race || "？") + "族", String(c.frame || "效果")].filter(Boolean);
     return "【" + parts.join("／") + "】";
 }
 
@@ -6519,7 +6619,7 @@ function diyCardHtml(card, size) {
 }
 
 
-/** ── 真实卡框（PNG 素材，与 v1 同一套文件名与叠加坐标） ── */
+/** ── 真实卡框（内置 WebP 素材） ── */
 
 /** 素材文件名（与 assets/yugioh/ 一一对应） */
 const REAL_FILES = {
@@ -6554,10 +6654,11 @@ async function checkFrameAssets() {
     const ok = await new Promise(function (resolve) {
         const img = new Image();
         let done = false;
-        const finish = function (v) { if (!done) { done = true; resolve(v); } };
+        let timer;
+        const finish = function (v) { if (!done) { done = true; clearTimeout(timer); resolve(v); } };
         img.onload = function () { finish(true); };
         img.onerror = function () { finish(false); };
-        setTimeout(function () { finish(false); }, 5000);
+        timer = setTimeout(function () { finish(false); }, 5000);
         img.src = sample;
     });
     if (ok) { log("DIY", "卡框素材加载正常：" + sample); return "✅ 卡框素材加载正常（" + sample + "）"; }
@@ -6571,7 +6672,7 @@ function frameBase() {
     return ownBase() + "assets/yugioh/";
 }
 
-/** 纯函数：真实卡框 HTML（叠字坐标与 v1 一致；加载失败由 installFrameFallback 换成 CSS 版） */
+/** 纯函数：真实卡框 HTML（按内置 1394×2031 素材定位；框图加载失败时回退 CSS） */
 function realFrameHtml(card, size) {
     const c = card || {};
     const w = size === "small" ? 150 : 224;
@@ -6585,34 +6686,39 @@ function realFrameHtml(card, size) {
     const attrFile = isSpell ? "attribute-spell.webp" : isTrap ? "attribute-trap.webp" : (ATTR_FILES[String(c.attribute || "")] || "");
     const isLink = String(c.frame || "") === "连接";
     const isXyz = String(c.frame || "") === "超量";
-    const starCount = isLink ? 0 : Math.max(0, Math.min(13, isXyz ? (Number(c.rank) || 4) : (Number(c.level) || 0)));
+    const starCount = isLink || isSpell || isTrap ? 0 : Math.max(0, Math.min(13, isXyz ? (Number(c.rank) || 4) : (Number(c.level) || 0)));
     const fpx = function (k) { return Math.round(w * k) + "px"; };
     const img = String(c.image || "").trim();
     const parts = [];
     parts.push("<div class='ygo2-diy-card ygo2-real' style='position:relative;width:" + w + "px;height:" + h + "px' data-fallback='" + escapeHtml(diyCardHtml(c, size)) + "'>");
-    parts.push("<img class='ygo2-frame' src='" + base + file + "' alt='' style='position:absolute;left:0;top:0;width:100%;height:100%'>");
-    if (img) parts.push("<img class='ygo2-art' src='" + escapeHtml(img) + "' alt='' style='position:absolute;left:9.5%;top:13.4%;width:81%;height:55%;object-fit:cover'>");
-    parts.push("<div style='position:absolute;left:9.5%;top:3.4%;width:72%;color:#111;font-weight:700;font-size:" + fpx(0.075) + ";line-height:1.15;overflow:hidden;white-space:nowrap'>" + escapeHtml(String(c.name || "未命名")) + "</div>");
-    if (attrFile) parts.push("<img src='" + base + attrFile + "' alt='' style='position:absolute;right:6%;top:3.2%;width:" + fpx(0.115) + ";height:" + fpx(0.115) + "'>");
+    parts.push("<img class='ygo2-frame' src='" + escapeHtml(base + file) + "' alt='' style='position:absolute;left:0;top:0;width:100%;height:100%'>");
+    const artBox = isPend ? "left:6.6%;top:18%;width:86.8%;height:49%" : "left:12.3%;top:18.5%;width:75.4%;height:51.8%";
+    if (img) parts.push("<img class='ygo2-art' src='" + escapeHtml(img) + "' alt='' style='position:absolute;" + artBox + ";object-fit:cover'>");
+    parts.push("<div style='position:absolute;left:7%;top:5.2%;width:74%;color:" + (isXyz ? "#fff" : "#111") + ";font-weight:700;font-size:" + fpx(0.075) + ";line-height:1.15;overflow:hidden;white-space:nowrap;text-overflow:ellipsis'>" + escapeHtml(String(c.name || "未命名")) + "</div>");
+    if (attrFile) parts.push("<img src='" + escapeHtml(base + attrFile) + "' alt='' style='position:absolute;right:6%;top:4.8%;width:" + fpx(0.115) + ";height:" + fpx(0.115) + "'>");
     if (starCount) {
         const starFile = isXyz ? "rank.webp" : "level.webp";
         const stars = [];
-        for (let i = 0; i < starCount; i++) stars.push("<img src='" + base + starFile + "' alt='' style='width:" + fpx(0.058) + ";height:" + fpx(0.058) + "'>");
-        parts.push("<div style='position:absolute;right:6%;top:10.6%;display:flex;justify-content:flex-end;width:62%'>" + stars.join("") + "</div>");
+        for (let i = 0; i < starCount; i++) stars.push("<img src='" + escapeHtml(base + starFile) + "' alt='' style='width:" + fpx(0.058) + ";height:" + fpx(0.058) + "'>");
+        parts.push("<div style='position:absolute;right:12%;top:13.4%;display:flex;justify-content:flex-end;width:76%'>" + stars.join("") + "</div>");
     }
     if (isLink) {
-        parts.push("<div style='position:absolute;right:7%;top:10.8%;color:#111;font-weight:700;font-size:" + fpx(0.06) + "'>LINK-" + (Number(c.link) || 2) + "</div>");
-        const pos = { 左上: "left:12%;top:12.5%", 上: "left:44%;top:12.5%", 右上: "left:76%;top:12.5%", 左: "left:5.5%;top:38%", 右: "left:83%;top:38%", 左下: "left:12%;top:63.5%", 下: "left:44%;top:63.5%", 右下: "left:76%;top:63.5%" };
+        parts.push("<div style='position:absolute;right:9%;bottom:0.6%;color:#111;font-weight:700;font-size:" + fpx(0.05) + "'>LINK-" + (Number(c.link) || 2) + "</div>");
+        const pos = { 左上: "left:6.5%;top:14.5%", 上: "left:44%;top:14.5%", 右上: "left:82%;top:14.5%", 左: "left:4%;top:40%", 右: "left:84.5%;top:40%", 左下: "left:6.5%;top:67%", 下: "left:44%;top:67%", 右下: "left:82%;top:67%" };
         const chosen = Array.isArray(c.arrows) ? c.arrows : ARROWS.slice(0, Number(c.link) || 2);
         parts.push(ARROWS.map(function (a) {
             const on = chosen.indexOf(a) >= 0;
             const f = "arrow-" + ARROW_FILES[a] + (on ? "-on.webp" : "-off.webp");
-            return "<img src='" + base + f + "' alt='' style='position:absolute;" + pos[a] + ";width:" + fpx(0.115) + ";height:" + fpx(0.115) + "'>";
+            return "<img src='" + escapeHtml(base + f) + "' alt='' style='position:absolute;" + pos[a] + ";width:" + fpx(0.115) + ";height:" + fpx(0.115) + "'>";
         }).join(""));
     }
-    const icon = SUBTYPE_ICONS[String(c.subtype || "")];
-    if (icon) parts.push("<img src='" + base + icon + "' alt='' style='position:absolute;right:7%;top:68.8%;width:" + fpx(0.09) + ";height:" + fpx(0.09) + "'>");
-    parts.push("<div style='position:absolute;left:9.5%;top:73.2%;width:81%;height:19%;font-size:" + fpx(0.052) + ";color:#111;line-height:1.45;overflow:hidden;white-space:pre-wrap'>" + (c.condition ? "<b>【召唤条件】" + escapeHtml(String(c.condition)) + "</b><br>" : "") + escapeHtml(String(c.desc || "")) + "</div>");
+    const icon = (isSpell || isTrap) && SUBTYPE_ICONS[String(c.subtype || "")];
+    if (icon) parts.push("<img src='" + escapeHtml(base + icon) + "' alt='' style='position:absolute;right:12%;top:13.4%;width:" + fpx(0.09) + ";height:" + fpx(0.09) + "'>");
+    if (isPend) {
+        const scale = Math.max(0, Math.min(13, Number(c.scale) || 0));
+        parts.push("<div class='ygo2-pendulum-scale' style='position:absolute;left:7%;top:68%;width:86%;display:flex;justify-content:space-between;color:#111;font-weight:700;font-size:" + fpx(0.06) + "'><span>◀ " + scale + "</span><span>" + scale + " ▶</span></div>");
+    }
+    parts.push("<div style='position:absolute;left:7%;top:75.5%;width:86%;height:" + (isSpell || isTrap ? "17%" : "14.5%") + ";font-size:" + fpx(0.048) + ";color:#111;line-height:1.4;overflow:hidden;white-space:pre-wrap'><b>" + escapeHtml(typeLine(c)) + "</b><br>" + (c.condition ? "<b>【召唤条件】" + escapeHtml(String(c.condition)) + "</b><br>" : "") + escapeHtml(String(c.desc || "")) + "</div>");
     if (!isSpell && !isTrap) {
         const atk = (c.atk === undefined || c.atk === null || c.atk === "") ? "?" : String(c.atk);
         const def = (c.def === undefined || c.def === null || c.def === "") ? "?" : String(c.def);
@@ -6641,6 +6747,10 @@ function installFrameFallback() {
         if (!card) return;
         const fb = card.getAttribute && card.getAttribute("data-fallback");
         if (!fb) return;
+        if (!el.classList.contains("ygo2-frame")) {
+            el.style.visibility = "hidden";
+            return;
+        }
         try { card.outerHTML = fb; log("DIY", "真实卡框加载失败，已回退 CSS 版"); } catch (error) { /* 忽略 */ }
     }, true);
     frameFallbackInstalled = true;
@@ -6733,7 +6843,14 @@ async function openDiyEditor(name) {
     const root = await waitForElement(EDITOR_ID);
     if (!root) { log("DIY", "编辑器没有显示"); return "编辑器没有正常显示。"; }
     const getEl = function (id) { return root.querySelector("#" + id); };
+    let subtypeCategory = getEl("ygo2_diy_category").value;
     const refresh = function () {
+        const category = getEl("ygo2_diy_category").value;
+        if (category !== subtypeCategory) {
+            const subtype = getEl("ygo2_diy_subtype");
+            if (subtype) subtype.innerHTML = subtypeOptions(category, subtype.value);
+            subtypeCategory = category;
+        }
         const box = getEl("ygo2_diy_preview");
         if (box) box.innerHTML = cardFaceHtml(readDraft(root, getEl), "big");
     };
@@ -6999,6 +7116,7 @@ const { ctx, log, emit } = __req("src/core/bus.js");
 const { registry } = __req("src/core/registry.js");
 const { settings, DEFAULTS } = __req("src/core/settings.js");
 const { ownBase } = __req("src/core/http.js");
+const { escapeHtml } = __req("src/ui/result.js");
 
 /**
  * 统一模板核心：字段注册表。
@@ -7037,7 +7155,7 @@ const FIELDS = [
     { group: "查询内容", type: "check", key: "includeBanlist", label: "禁限状态" },
     { group: "查询内容", type: "check", key: "includeSupplement", label: "官方补充说明" },
     { group: "查询内容", type: "check", key: "includeFaq", label: "附带最近 3 条官方裁定" },
-    { group: "查询内容", type: "select", key: "banlistRegion", label: "禁限表区域", options: [["cn", "官方简中"], ["ja", "OCG 日文"], ["en", "TCG 英文"]] },
+    { group: "查询内容", type: "select", key: "banlistRegion", label: "禁限表区域", hint: "无限制＝无禁限规则；仍检查卡组张数和同名卡最多 3 张。", options: [["cn", "官方简中"], ["ja", "OCG 日文"], ["en", "TCG 英文"], ["none", "无限制"]] },
     { group: "查询内容", type: "check", key: "useYgoprodeck", label: "允许访问 db.ygoprodeck.com", hint: "用于取异画与英文名；关闭后只用本地数据（异画索引已内置，仍可离线看）。" },
     { group: "查询内容", type: "check", key: "handImages", label: "起手模拟显示卡图" },
     { group: "查询内容", type: "number", key: "cardImgMax", label: "聊天里卡图最大宽度（像素）", min: 120, max: 900, step: 20 },
@@ -7078,7 +7196,7 @@ const FIELDS = [
     { group: "玩法", type: "button", key: "diyNew", label: "＋ 新建 DIY 卡（图形编辑器）", action: "diyNew" },
     { group: "玩法", type: "button", key: "diyList", label: "我的 DIY 卡（图形列表）", action: "diyList" },
     { group: "玩法", type: "text", key: "diyFrameBase", label: "自定义卡框目录（留空＝用自带素材）", hint: "填一个以 / 结尾的目录地址（例如你自己的卡框 CDN）；里面需要有 card-normal.webp 等文件。取不到会自动回退成自绘卡面。" },
-    { group: "玩法", type: "select", key: "diyFrameMode", label: "DIY 卡面渲染方式", hint: "css＝自绘卡面（默认，永远可用）；real＝真实卡框 PNG（素材已内置；某张加载失败会自动回退 css）。", options: [["css", "自绘卡面（css）"], ["real", "真实卡框 PNG（real）"]] },
+    { group: "玩法", type: "select", key: "diyFrameMode", label: "DIY 卡面渲染方式", hint: "real＝真实卡框（默认，内置 WebP 素材）；卡框加载失败会回退自绘版。css＝自绘卡面。", options: [["real", "真实卡框（real）"], ["css", "自绘卡面（css）"]] },
     { group: "玩法", type: "button", key: "diyCheckAssets", label: "检查卡框素材", action: "diyCheckAssets" },
     { group: "联动", type: "check", key: "vrmReaction", label: "抽到稀有卡时让 VRM 角色做表情（需装 VRM 扩展）" },
     { group: "联动", type: "check", key: "webSearchFallback", label: "本地查不到时用网络搜索（需装 Web Search 扩展）" },
@@ -7248,7 +7366,7 @@ function refreshDynamicSelects() {
 function renderControl(f, value) {
     const id = fieldId(f.key);
     const q = String.raw`"`;
-    const attr = function (name, val) { return " " + name + "=" + q + String(val) + q; };
+    const attr = function (name, val) { return " " + name + "=" + q + escapeHtml(val) + q; };
     const hint = f.hint ? '<div class="ygo2-hint">' + f.hint + '</div>' : "";
     const wrap = function (inner) { return '<div class="ygo2-field" data-key="' + f.key + '">' + inner + hint + '</div>'; };
     // 复选框：用酒馆自己的 checkbox_label 结构，天然跟随主题
@@ -7261,7 +7379,7 @@ function renderControl(f, value) {
     if (f.type === "select") {
         const optList = optionListOf(f);
         const opts = (optList || []).map(function (pair) {
-            return '<option value=' + q + pair[0] + q + (String(value) === pair[0] ? " selected" : "") + '>' + pair[1] + '</option>';
+            return '<option value=' + q + escapeHtml(pair[0]) + q + (String(value) === pair[0] ? " selected" : "") + '>' + escapeHtml(pair[1]) + '</option>';
         }).join("");
         return wrap(label + '<select class=' + q + 'text_pole ygo2-select' + q + attr("id", id) + '>' + opts + '</select>');
     }
@@ -7273,7 +7391,7 @@ function renderControl(f, value) {
         return wrap(label + '<input type=' + q + 'number' + q + ' class=' + q + 'text_pole ygo2-input' + q + attr("id", id) + attr("value", value === undefined ? "" : value) + attrs + '>');
     }
     if (f.type === "textarea") {
-        return wrap(label + '<textarea class=' + q + 'text_pole ygo2-textarea' + q + attr("id", id) + attr("rows", 3) + '>' + String(value === undefined ? "" : value) + '</textarea>');
+        return wrap(label + '<textarea class=' + q + 'text_pole ygo2-textarea' + q + attr("id", id) + attr("rows", 3) + '>' + escapeHtml(value === undefined ? "" : value) + '</textarea>');
     }
     if (f.type === "password") {
         return wrap(label + '<input type=' + q + 'password' + q + ' class=' + q + 'text_pole ygo2-input' + q + attr("id", id) + attr("value", value === undefined ? "" : value) + ' autocomplete=' + q + 'off' + q + '>');
@@ -7750,9 +7868,9 @@ const { createInterceptor, registerInterceptorHooks } = __req("src/inject/interc
 
 const { mountPanel, registerStrictnessAction, registryProblems } = __req("src/ui/panel.js");
 const { configure: configurePanel, refreshDynamicSelects } = __req("src/ui/panel.js");
-const { registerResult } = __req("src/ui/result.js");
+const { registerResult, escapeHtml } = __req("src/ui/result.js");
 const { registerPromptEditor } = __req("src/ui/prompt.js");
-const { registerDiyUi, openDiyEditor, diyCardHtml, installFrameFallback } = __req("src/ui/diy.js");
+const { registerDiyUi, openDiyEditor, cardFaceHtml, installFrameFallback } = __req("src/ui/diy.js");
 const { registerGameUi, openCollection, openShop, openBoard, openRecap, openCard, openCardInput, installBuyDelegate } = __req("src/ui/game.js");
 
 const { registerTools } = __req("src/api/tools.js");
@@ -7761,7 +7879,7 @@ const { registerIntegrations } = __req("src/api/integrations.js");
 const { registerSelfTest } = __req("src/api/selftest.js");
 const { registerDeckImage } = __req("src/api/deckimage.js");
 
-const MODULE_VERSION = "0.2.0";
+const MODULE_VERSION = "0.2.2";
 
 // ★ 必须在"脚本求值这一刻"记录自身目录：之后 document.currentScript 就变回 null 了。
 //   这样无论仓库/文件夹叫什么名字，data/ 与 assets/ 都能定位到（GitHub 安装时目录名 = 仓库名）。
@@ -7799,7 +7917,7 @@ function installCardImgCss() {
         const px = Math.max(120, Math.min(900, Number(settings.get("cardImgMax")) || 360));
         let el = document.getElementById("ygo2-img-style");
         if (!el) { el = document.createElement("style"); el.id = "ygo2-img-style"; document.head.appendChild(el); }
-        el.textContent = '.mes_text img.ygo2-card-img{max-width:min(100%," + px + "px);height:auto;border-radius:6px}';
+        el.textContent = '.mes_text img.ygo2-card-img{max-width:min(100%,' + px + 'px);height:auto;border-radius:6px}';
     } catch (error) { /* 无 DOM 时忽略 */ }
 }
 
@@ -7843,7 +7961,7 @@ const PANEL_ACTIONS = {
     diyList: async function () {
         const list = settings.get("diyCards") || [];
         if (!list.length) return "还没有 DIY 卡，点「＋ 新建 DIY 卡」创建第一张。";
-        const html = '<div class="ygo2-diy-list">' + list.map(function (card) { return '<div class="ygo2-diy-list-item">' + diyCardHtml(card, "small") + '<div class="ygo2-diy-list-name">' + String(card.name || "") + '</div></div>'; }).join("") + '</div>';
+        const html = '<div class="ygo2-diy-list">' + list.map(function (card) { return '<div class="ygo2-diy-list-item">' + cardFaceHtml(card, "small") + '<div class="ygo2-diy-list-name">' + escapeHtml(card.name || "") + '</div></div>'; }).join("") + '</div>';
         const c = ctx();
         if (typeof c.callGenericPopup === "function") { const t = c.POPUP_TYPE || {}; await c.callGenericPopup(html, t.TEXT === undefined ? 1 : t.TEXT, "", { wide: true, large: true, okButton: "关闭" }); return "共 " + list.length + " 张 DIY 卡（已在面板中显示）。"; }
         return "共 " + list.length + " 张 DIY 卡：" + list.map(function (x) { return x.name; }).join("、");
@@ -8067,7 +8185,7 @@ if (typeof globalThis !== "undefined" && (globalThis.SillyTavern || (ctx() && ct
 return { MODULE_VERSION, PROBE_KEY, probe, INTERCEPTOR_NAME, PANEL_ACTIONS, REQUIRED_CAPS, boot, whenPanelMounted, ygo2Activate, ensureBoot };
 });
 
-try { globalThis.YgoCardLookupV2Build = {"at":"2026-10-06T16:23:54","hash":"d972070d","modules":36}; } catch (e) { /* 忽略 */ }
+try { globalThis.YgoCardLookupV2Build = {"at":"2026-10-10T16:17:28","hash":"e823ca6c","modules":36}; } catch (e) { /* 忽略 */ }
 var __entry = __req("index.js");
 try { globalThis.YgoCardLookupV2 = __entry; } catch (e) { /* 忽略 */ }
 })();

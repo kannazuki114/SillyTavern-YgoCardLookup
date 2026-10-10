@@ -1,6 +1,7 @@
 /** 唯一宿主接触点：模块通过 ctx() 取酒馆上下文，不在模块顶层触碰全局。 */
 let injected = null;
 export function setContext(context) { injected = context; }
+export function contextOverride() { return injected; }
 export function ctx() {
     if (injected) return injected;
     if (typeof SillyTavern !== "undefined" && SillyTavern.getContext) return SillyTavern.getContext();

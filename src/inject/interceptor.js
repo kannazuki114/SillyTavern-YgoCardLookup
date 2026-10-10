@@ -1,4 +1,4 @@
-import { ctx, log, emit } from "../core/bus.js";
+import { ctx, log, emit, on } from "../core/bus.js";
 import { settings } from "../core/settings.js";
 import { registry } from "../core/registry.js";
 import { matchTrigger, findSegments, allowsFreeText, CARD_ARG_ACTIONS } from "./detect.js";
@@ -57,6 +57,36 @@ async function buildExternalSystem(conf, cards, question) {
 
 /** 拦截器最近一次被宿主调用的时间（兜底注入据此判断） */
 let lastRunAt = 0;
+let lastMessage = null;
+let lastMessageText = "";
+let lastMetadata = null;
+let lastType = "";
+let lastResult = "";
+let inFlight = null;
+let runRevision = 0;
+
+function messageKey(chat) {
+    const list = Array.isArray(chat) ? chat : [];
+    for (let i = list.length - 1; i >= 0; i--) {
+        const m = list[i];
+        if (m && m.is_user) return { message: m, text: String(m.mes || "").split("\n\n【查卡器资料】")[0] };
+    }
+    return { message: null, text: "" };
+}
+
+function automaticEnabled() {
+    return settings.get("interceptEnabled") !== false && settings.groupEnabled("自动检测注入") && !settings.isolationActive() && settings.get("triggerMode") !== "command";
+}
+
+function resetRun() {
+    runRevision++;
+    lastRunAt = 0;
+    lastMessage = null;
+    lastMessageText = "";
+    inFlight = null;
+    lastResult = "";
+    if (registry.has("writeInjection")) registry.call("writeInjection", "").catch(function () {});
+}
 
 /** 兜底注入：宿主没有调用拦截器（不支持 generate_interceptor / 调用失败）时，
  *  在 MESSAGE_SENT（玩家消息已入楼、提示词还没组装）用**同一个拦截器**再跑一次 ——
@@ -64,20 +94,23 @@ let lastRunAt = 0;
  *  v1 的「拦截器不生效时改用事件兜底注入」就是这个语义。 */
 export async function runFallback() {
     if (settings.get("injectionFallback") === false) return { ok: false, reason: "设置里已关闭兜底注入" };
-    if (lastRunAt && Date.now() - lastRunAt < 5000) return { ok: false, reason: "拦截器本轮已运行（" + (Date.now() - lastRunAt) + "ms 前），不需要兜底" };
     const c = (typeof ctx === "function") ? ctx() : null;
     const chat = (c && Array.isArray(c.chat)) ? c.chat : null;
     if (!chat || !chat.length) return { ok: false, reason: "拿不到聊天记录" };
     if (typeof builtInterceptor !== "function") return { ok: false, reason: "拦截器尚未建立" };
-    const before = lastRunAt;
+    const key = messageKey(chat);
+    if (key.message === lastMessage && key.text === lastMessageText && c.chatMetadata === lastMetadata && lastType === "normal") {
+        if (inFlight) {
+            const out = await inFlight;
+            return { ok: true, injected: !!out, chars: String(out || "").length };
+        }
+        if (lastRunAt && Date.now() - lastRunAt < 5000 && automaticEnabled()) return { ok: false, reason: "本条消息的拦截器已运行，不需要重复兜底" };
+    }
     try {
         const out = await builtInterceptor(chat, 0, null, "normal");
         return { ok: true, injected: !!out, chars: String(out || "").length };
     } catch (error) {
         return { ok: false, reason: "兜底注入失败：" + ((error && error.message) ? error.message : String(error)) };
-    } finally {
-        // 无论成功失败，都别让同一轮反复兜底
-        if (!lastRunAt || lastRunAt === before) lastRunAt = Date.now();
     }
 }
 
@@ -86,11 +119,17 @@ let builtInterceptor = null;
 
 export function registerInterceptorHooks() {
     registry.provide("injectFallback:run", async function () { return await runFallback(); });
+    on("chatChanged", resetRun);
+    on("generationEnded", resetRun);
+    on("settings", function () { if (!automaticEnabled()) resetRun(); });
 }
 
 export function createInterceptor() {
-    const interceptor = async function (chat, contextSize, abort, type) {
+    const interceptor = async function (chat, contextSize, abort, type, revision) {
         lastRunAt = Date.now();   // 标记"拦截器本轮确实被宿主调用了"，兜底注入据此判断是否需要出手
+        const metadata = ctx().chatMetadata;
+        // 同 id 的提示词会跨轮保存；无命中、关闭或异常时都不能留下旧资料。
+        if (registry.has("writeInjection")) await registry.call("writeInjection", "");
         try { log("拦截", "被调用（chat " + ((chat && chat.length) || 0) + " 条，type=" + String(type || "") + "）"); } catch (e0) { /* 忽略 */ }
         const conf = settings.all();
         if (!conf.interceptEnabled) return;
@@ -176,9 +215,10 @@ export function createInterceptor() {
         if (!injection) return;
         // 外部钩子：允许别的脚本过滤/改写注入内容（v1 hooks.filterInjection 同义）
         if (registry.has("hook:filterInjection")) {
-            try { const f = await registry.call("hook:filterInjection", injection); if (typeof f === "string" && f) injection = f; }
+            try { const f = await registry.call("hook:filterInjection", injection); if (typeof f === "string") injection = f; }
             catch (error) { log("拦截", "filterInjection 钩子出错（已忽略）"); }
         }
+        if (!injection) return "";
         // 卡图页脚：预算截断发生在 buildInjection 内部，页脚在其后追加，所以卡图链接【不会被切】；
         // 外部 AI 独占模式（本地卡面被丢弃）时，这一段也保证卡图照样送到 AI。
         if (conf.includeImage !== false && detectedCards.length) {
@@ -196,7 +236,8 @@ export function createInterceptor() {
                 }
             } catch (error) { /* 卡图页脚失败不影响注入 */ }
         }
-        const written = await registry.has("writeInjection") ? await registry.call("writeInjection", injection) : false;
+        if (revision !== runRevision || metadata !== ctx().chatMetadata || !automaticEnabled()) return "";
+        const written = registry.has("writeInjection") ? await registry.call("writeInjection", injection) : false;
         log("注入", cards.length + " 张卡 → " + injection.length + " 字（" + kind + "，" + (Date.now() - started) + "ms）写入=" + written);
         if (conf.logToast === true) {
             try { const toaster = ctx().toastr || (typeof toastr !== "undefined" ? toastr : null); if (toaster && typeof toaster.info === "function") toaster.info("查卡器：已注入 " + cards.length + " 张卡资料"); } catch (error) { /* 忽略 */ }
@@ -217,11 +258,34 @@ export function createInterceptor() {
     };
         // 对外包一层"永不抛错"：拦截器里任何异常都不许影响生成（宁可没注入，也不能让玩家发不出去）
         const safeInterceptor = async function (chat, contextSize, abort, type) {
-            try { return await interceptor(chat, contextSize, abort, type); }
+            let key = messageKey(chat);
+            const hostKey = messageKey(ctx().chat);
+            if (hostKey.message && hostKey.text === key.text) key = hostKey;
+            const runType = String(type || "normal");
+            if (key.message && key.message === lastMessage && key.text === lastMessageText && ctx().chatMetadata === lastMetadata && runType === lastType && automaticEnabled()) {
+                if (inFlight) return await inFlight;
+                if (lastRunAt && Date.now() - lastRunAt < 5000) return lastResult;
+            }
+            const revision = ++runRevision;
+            lastMessage = key.message;
+            lastMessageText = key.text;
+            lastMetadata = ctx().chatMetadata;
+            lastType = runType;
+            const pending = interceptor(chat, contextSize, abort, type, revision).catch(function (error) {
+                log("拦截", "⚠️ 拦截器内部出错，已忽略、不影响生成：" + (error && error.message ? error.message : error));
+                return "";
+            });
+            inFlight = pending;
+            try {
+                const result = await pending;
+                if (revision === runRevision) { lastResult = result; lastRunAt = Date.now(); }
+                return result;
+            }
             catch (error) {
                 try { log("拦截", "⚠️ 拦截器内部出错，已忽略、不影响生成：" + (error && error.message ? error.message : error)); } catch (e1) { /* 忽略 */ }
                 return "";
             }
+            finally { if (inFlight === pending) inFlight = null; }
         };
         builtInterceptor = safeInterceptor;
     return safeInterceptor;
@@ -230,7 +294,7 @@ export function createInterceptor() {
 /** 供面板/命令复用的单次检测（不写入提示词）。 */
 export async function detectOnce(text) {
     const trigger = matchTrigger(text);
-    if (trigger && registry.has("runAction")) return { kind: "trigger:" + trigger.action, cards: await registry.call("runAction", trigger) };
+    if (trigger) return { kind: "trigger:" + trigger.action, cards: await runTrigger(trigger) };
     if (allowsFreeText() && registry.has("resolveCards")) return { kind: "freetext", cards: await registry.call("resolveCards", text) };
     return { kind: "none", cards: [] };
 }

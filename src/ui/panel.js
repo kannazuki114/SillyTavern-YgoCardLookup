@@ -2,6 +2,7 @@ import { ctx, log, emit } from "../core/bus.js";
 import { registry } from "../core/registry.js";
 import { settings, DEFAULTS } from "../core/settings.js";
 import { ownBase } from "../core/http.js";
+import { escapeHtml } from "./result.js";
 
 /**
  * 统一模板核心：字段注册表。
@@ -40,7 +41,7 @@ export const FIELDS = [
     { group: "查询内容", type: "check", key: "includeBanlist", label: "禁限状态" },
     { group: "查询内容", type: "check", key: "includeSupplement", label: "官方补充说明" },
     { group: "查询内容", type: "check", key: "includeFaq", label: "附带最近 3 条官方裁定" },
-    { group: "查询内容", type: "select", key: "banlistRegion", label: "禁限表区域", options: [["cn", "官方简中"], ["ja", "OCG 日文"], ["en", "TCG 英文"]] },
+    { group: "查询内容", type: "select", key: "banlistRegion", label: "禁限表区域", hint: "无限制＝无禁限规则；仍检查卡组张数和同名卡最多 3 张。", options: [["cn", "官方简中"], ["ja", "OCG 日文"], ["en", "TCG 英文"], ["none", "无限制"]] },
     { group: "查询内容", type: "check", key: "useYgoprodeck", label: "允许访问 db.ygoprodeck.com", hint: "用于取异画与英文名；关闭后只用本地数据（异画索引已内置，仍可离线看）。" },
     { group: "查询内容", type: "check", key: "handImages", label: "起手模拟显示卡图" },
     { group: "查询内容", type: "number", key: "cardImgMax", label: "聊天里卡图最大宽度（像素）", min: 120, max: 900, step: 20 },
@@ -81,7 +82,7 @@ export const FIELDS = [
     { group: "玩法", type: "button", key: "diyNew", label: "＋ 新建 DIY 卡（图形编辑器）", action: "diyNew" },
     { group: "玩法", type: "button", key: "diyList", label: "我的 DIY 卡（图形列表）", action: "diyList" },
     { group: "玩法", type: "text", key: "diyFrameBase", label: "自定义卡框目录（留空＝用自带素材）", hint: "填一个以 / 结尾的目录地址（例如你自己的卡框 CDN）；里面需要有 card-normal.webp 等文件。取不到会自动回退成自绘卡面。" },
-    { group: "玩法", type: "select", key: "diyFrameMode", label: "DIY 卡面渲染方式", hint: "css＝自绘卡面（默认，永远可用）；real＝真实卡框 PNG（素材已内置；某张加载失败会自动回退 css）。", options: [["css", "自绘卡面（css）"], ["real", "真实卡框 PNG（real）"]] },
+    { group: "玩法", type: "select", key: "diyFrameMode", label: "DIY 卡面渲染方式", hint: "real＝真实卡框（默认，内置 WebP 素材）；卡框加载失败会回退自绘版。css＝自绘卡面。", options: [["real", "真实卡框（real）"], ["css", "自绘卡面（css）"]] },
     { group: "玩法", type: "button", key: "diyCheckAssets", label: "检查卡框素材", action: "diyCheckAssets" },
     { group: "联动", type: "check", key: "vrmReaction", label: "抽到稀有卡时让 VRM 角色做表情（需装 VRM 扩展）" },
     { group: "联动", type: "check", key: "webSearchFallback", label: "本地查不到时用网络搜索（需装 Web Search 扩展）" },
@@ -251,7 +252,7 @@ export function refreshDynamicSelects() {
 export function renderControl(f, value) {
     const id = fieldId(f.key);
     const q = String.raw`"`;
-    const attr = function (name, val) { return " " + name + "=" + q + String(val) + q; };
+    const attr = function (name, val) { return " " + name + "=" + q + escapeHtml(val) + q; };
     const hint = f.hint ? '<div class="ygo2-hint">' + f.hint + '</div>' : "";
     const wrap = function (inner) { return '<div class="ygo2-field" data-key="' + f.key + '">' + inner + hint + '</div>'; };
     // 复选框：用酒馆自己的 checkbox_label 结构，天然跟随主题
@@ -264,7 +265,7 @@ export function renderControl(f, value) {
     if (f.type === "select") {
         const optList = optionListOf(f);
         const opts = (optList || []).map(function (pair) {
-            return '<option value=' + q + pair[0] + q + (String(value) === pair[0] ? " selected" : "") + '>' + pair[1] + '</option>';
+            return '<option value=' + q + escapeHtml(pair[0]) + q + (String(value) === pair[0] ? " selected" : "") + '>' + escapeHtml(pair[1]) + '</option>';
         }).join("");
         return wrap(label + '<select class=' + q + 'text_pole ygo2-select' + q + attr("id", id) + '>' + opts + '</select>');
     }
@@ -276,7 +277,7 @@ export function renderControl(f, value) {
         return wrap(label + '<input type=' + q + 'number' + q + ' class=' + q + 'text_pole ygo2-input' + q + attr("id", id) + attr("value", value === undefined ? "" : value) + attrs + '>');
     }
     if (f.type === "textarea") {
-        return wrap(label + '<textarea class=' + q + 'text_pole ygo2-textarea' + q + attr("id", id) + attr("rows", 3) + '>' + String(value === undefined ? "" : value) + '</textarea>');
+        return wrap(label + '<textarea class=' + q + 'text_pole ygo2-textarea' + q + attr("id", id) + attr("rows", 3) + '>' + escapeHtml(value === undefined ? "" : value) + '</textarea>');
     }
     if (f.type === "password") {
         return wrap(label + '<input type=' + q + 'password' + q + ' class=' + q + 'text_pole ygo2-input' + q + attr("id", id) + attr("value", value === undefined ? "" : value) + ' autocomplete=' + q + 'off' + q + '>');

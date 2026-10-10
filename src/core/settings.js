@@ -77,7 +77,7 @@ export const DEFAULTS = {
     summonAutoApply: true,       // 召唤检查通过时自动落到决斗盘（祭品送墓、怪兽上场、用掉本回合通招）
     isolateCommand: false,      // 隔离：勾上后只有指令（/ygo…）触发，一切自动检测/自然语言触发都不生效
     groupsDisabled: [],         // 栏目隔离：列在这里的栏目整体停用（自动检测注入/提示词/查询内容/外部接口/玩法/联动/日志/查看）
-    diyFrameMode: "real",        // DIY 卡面：css 自绘 / real 真实卡框 PNG（素材在 assets/yugioh/）
+    diyFrameMode: "real",        // DIY 卡面：css 自绘 / real 真实卡框 WebP（素材在 assets/yugioh/）
     diyFrameBase: "",           // 自定义卡框目录（留空＝用自带素材）           // 聊天里卡图最大宽度（像素）
     collection: {},
     collectionTotal: 0,
@@ -155,12 +155,21 @@ export function groupEnabled(name) {
 
 /** 供界面层判断"这个动作属于哪个栏目"（触发词/命令共用） */
 export const ACTION_GROUP = {
-    card: "查询内容", search: "查询内容", rule: "查询内容", art: "查询内容", alias: "查询内容", recap: "查询内容",
-    pack: "玩法", draw: "玩法", shop: "玩法", buy: "玩法", deck: "玩法", hand: "玩法", board: "玩法", duel: "玩法", diy: "玩法",
+    card: "查询内容", search: "查询内容", rule: "查询内容", ruling: "查询内容", banlist: "查询内容", series: "查询内容", art: "查询内容", alias: "查询内容", recap: "查询内容",
+    pack: "玩法", packlist: "玩法", packsearch: "玩法", draw: "玩法", shop: "玩法", buy: "玩法", deck: "玩法", deckimage: "玩法", hand: "玩法", summon: "玩法", collection: "玩法", album: "玩法", board: "玩法", duel: "玩法", diy: "玩法",
     log: "日志", selftest: "日志",
 };
 export function actionGroup(action) { return ACTION_GROUP[String(action || "")] || ""; }
-export function actionAllowed(action) { const g = actionGroup(action); return g ? groupEnabled(g) : true; }
+export function actionAllowed(action, source) {
+    const g = actionGroup(action);
+    if (!g) return true;
+    // 用户指令仍遵循显式栏目停用，但不受自动触发总隔离影响。
+    if (source === "command") {
+        const off = get("groupsDisabled");
+        return !(Array.isArray(off) && off.indexOf(g) >= 0);
+    }
+    return groupEnabled(g);
+}
 
 export const settings = {
     KEY: KEY,

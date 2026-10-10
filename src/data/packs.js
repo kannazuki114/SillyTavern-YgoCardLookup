@@ -134,12 +134,14 @@ export const getReleaseRows = lazyIndex(async function () {
         });
     } catch (error) {
         log("数据", "卡包发售表取不到（" + (error && error.message ? error.message : error) + "）：卡包功能暂时退化为按本地卡库随机抽卡");
+        getReleaseRows.reset();
         return [];
     }
 });
 export const getPackIndex = lazyIndex(async function () {
     const rows = await getReleaseRows();
     const index = buildPackIndex(rows);
+    if (!index.length) getPackIndex.reset();
     log("数据", "卡包索引已建立：" + index.length + " 个卡包");
     return index;
 });
@@ -313,7 +315,7 @@ export async function runAction(trigger) {
     const action = trigger && trigger.action;
     const arg = trigger && trigger.arg;
     if (action === "pack") return [{ name: "开卡包", text: await openPackText({ pack: arg }) }];
-    if (action === "draw") return [{ name: "抽卡", text: await drawText({ count: 2 }) }];
+    if (action === "draw") return [{ name: "抽卡", text: await drawText({ count: /^\d{1,3}$/.test(String(arg || "").trim()) ? Number(arg) : 2 }) }];
     if (action === "packsearch") {
         // 没有关键词就明确问回去，绝不替用户猜一个卡名（曾经这里写死 "青眼"，导致查什么都是青眼）
         if (!String(arg || "").trim()) return [{ name: "卡包查询", text: "想查哪个系列的卡包？例如「白银城卡包有哪些」或「查卡包 黑魔导」。" }];

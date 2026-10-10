@@ -38,17 +38,17 @@ export async function mountEvents(hooks) {
         if (!key || typeof fn !== "function") return;
         try { src.on(key, fn); mounted++; } catch (error) { console.warn("[YGO2] 事件挂载失败 " + name, error); }
     };
-    on("APP_READY", function () { if (h.onReady) h.onReady(); });
-    on("CHAT_CHANGED", function () { if (h.onChatChanged) h.onChatChanged(); emit("chatChanged", {}); });
-    on("MESSAGE_SENT", function (id) { if (h.onMessageSent) h.onMessageSent(id); });
-    on("MESSAGE_SENT", function () { if (h.onMessageSentFallback) h.onMessageSentFallback(); });   // 兜底注入（v1「拦截器不生效时改用事件兜底」同语义）
+    on("APP_READY", function () { if (h.onReady) return h.onReady(); });
+    on("CHAT_CHANGED", async function () { if (h.onChatChanged) await h.onChatChanged(); emit("chatChanged", {}); });
+    on("MESSAGE_SENT", function (id) { if (h.onMessageSent) return h.onMessageSent(id); });
+    on("MESSAGE_SENT", function () { if (h.onMessageSentFallback) return h.onMessageSentFallback(); });
     // ★ v1 的兜底通道：桌面客户端（tt）不执行 manifest 的 generate_interceptor，
     //   也不触发 CHAT_COMPLETION_PROMPT_READY；这个事件在**提示词组装前**触发，
     //   在这里改 ctx().chat 的最后一条消息，改动会真的进入本次发送。
-    on("GENERATION_AFTER_COMMANDS", function (type) { if (h.onAfterCommands) h.onAfterCommands(type); });
-    on("MESSAGE_RECEIVED", function (id) { if (h.onMessageReceived) h.onMessageReceived(id); });
-    on("GENERATION_ENDED", function () { if (h.onGenerationEnded) h.onGenerationEnded(); });
-    on("SETTINGS_UPDATED", function () { if (h.onSettingsUpdated) h.onSettingsUpdated(); });
+    on("GENERATION_AFTER_COMMANDS", function (type) { if (h.onAfterCommands) return h.onAfterCommands(type); });
+    on("MESSAGE_RECEIVED", function (id) { if (h.onMessageReceived) return h.onMessageReceived(id); });
+    on("GENERATION_ENDED", async function () { if (h.onGenerationEnded) await h.onGenerationEnded(); emit("generationEnded", {}); });
+    on("SETTINGS_UPDATED", function () { if (h.onSettingsUpdated) return h.onSettingsUpdated(); });
     log("事件", "已挂载 " + mounted + " 个事件");
     // 发送体改写钩子（官方 CHAT_COMPLETION_PROMPT_READY）：注册表里有人装才挂，失败不影响其它事件
     try {

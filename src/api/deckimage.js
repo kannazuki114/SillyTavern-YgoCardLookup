@@ -1,5 +1,5 @@
 import { ctx, log } from "../core/bus.js";
-import { deckArgText } from "../data/deck.js";
+import { deckArgText, deckFromChat } from "../data/deck.js";
 import { registry } from "../core/registry.js";
 import { settings } from "../core/settings.js";
 import { escapeHtml } from "../ui/result.js";
@@ -21,7 +21,7 @@ export async function resolveDeck(text) {
     for (const group of GROUPS) {
         const bucket = group[1];
         for (const item of deck[bucket] || []) {
-            const row = stats.byName.get(normalizeKey(item.name));
+            const row = stats.byId.get(String(item.name)) || stats.byName.get(normalizeKey(item.name));
             if (!row) { out.unknown.push(item.name + "×" + item.count); continue; }
             out[bucket].push({ row: row, count: item.count, input: item.name });
             out.counts[bucket] += item.count;
@@ -84,6 +84,8 @@ export function latestDeckText(maxScan) {
     const c = ctx();
     const chat = Array.isArray(c.chat) ? c.chat : [];
     const limit = Math.max(1, Number(maxScan) || 5);
+    const block = deckFromChat(chat, limit);
+    if (block) return block;
     for (let i = chat.length - 1, n = 0; i >= 0 && n < limit; i--) {
         const mes = String((chat[i] && chat[i].mes) || "");
         if (!mes) continue;
@@ -126,7 +128,7 @@ export async function openDeckImage(text) {
 /** 4) 注册能力 */
 export function registerDeckImage() {
     registry.provide("cmd:deckimage", async function (args) {
-        const text = String((args && args.deck) || "").trim();
+        const text = deckArgText(args).text;
         if (!text) return "要生成卡组图的话，请把卡表贴在命令后面（每行「3 卡名」），或先发一条卡表消息。";
         return await openDeckImage(text);
     });

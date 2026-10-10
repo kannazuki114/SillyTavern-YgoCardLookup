@@ -181,8 +181,8 @@ export async function checkSummon(args) {
     const judge = await judgeSummon(row, method, {});
     // 禁限提醒
     try {
-        const limits = await getLimits();
         const region = settings.get("banlistRegion") || "cn";
+        const limits = region === "none" ? null : await getLimits();
         const status = banlistStatus(limits, region, row);
         if (status !== "unknown" && status !== "none") judge.verdicts.push("⚠️ 禁限状态（" + (REGION_LABEL[region] || region) + "）：" + STATUS_TEXT[status]);
     } catch (error) { /* 禁限表不可用不影响判定 */ }

@@ -18,7 +18,7 @@ export const ARROWS = ["左上", "上", "右上", "左", "右", "左下", "下",
 export const SPELL_SUBTYPES = ["通常", "永续", "装备", "速攻", "场地", "仪式"];
 export const TRAP_SUBTYPES = ["通常", "永续", "反击"];
 export const ATTR_COLOR = { 光: "#e8d24a", 暗: "#7a4fa8", 地: "#8a6a3a", 水: "#3a7ac8", 炎: "#c8483a", 风: "#3aa86a", 神: "#d8a02a" };
-/** 各卡种的边框配色（CSS 卡框用；真实 PNG 素材缺失时的主路径） */
+/** 各卡种的边框配色（CSS 卡框用；真实卡框素材缺失时回退） */
 export const FRAME_STYLE = {
     通常: { edge: "#c9a227", bg: "#f0e2b0" }, 效果: { edge: "#c8722a", bg: "#f6e0c0" },
     仪式: { edge: "#2f6fb0", bg: "#dbe6f4" }, 融合: { edge: "#8a5aa8", bg: "#e8dcf2" },
@@ -41,8 +41,7 @@ export function typeLine(card) {
     const sub = String(c.subtype || "").trim();
     if (isSpell) return "【魔法卡" + (sub ? "／" + sub : "") + "】";
     if (isTrap) return "【陷阱卡" + (sub ? "／" + sub : "") + "】";
-    const isPend = c.frame === "灵摆";
-    const parts = [String(c.race || "？") + "族", isPend ? "灵摆" : "", String(c.frame || "效果")].filter(Boolean);
+    const parts = [String(c.race || "？") + "族", String(c.frame || "效果")].filter(Boolean);
     return "【" + parts.join("／") + "】";
 }
 
@@ -100,7 +99,7 @@ export function diyCardHtml(card, size) {
 }
 
 
-/** ── 真实卡框（PNG 素材，与 v1 同一套文件名与叠加坐标） ── */
+/** ── 真实卡框（内置 WebP 素材） ── */
 
 /** 素材文件名（与 assets/yugioh/ 一一对应） */
 export const REAL_FILES = {
@@ -135,10 +134,11 @@ export async function checkFrameAssets() {
     const ok = await new Promise(function (resolve) {
         const img = new Image();
         let done = false;
-        const finish = function (v) { if (!done) { done = true; resolve(v); } };
+        let timer;
+        const finish = function (v) { if (!done) { done = true; clearTimeout(timer); resolve(v); } };
         img.onload = function () { finish(true); };
         img.onerror = function () { finish(false); };
-        setTimeout(function () { finish(false); }, 5000);
+        timer = setTimeout(function () { finish(false); }, 5000);
         img.src = sample;
     });
     if (ok) { log("DIY", "卡框素材加载正常：" + sample); return "✅ 卡框素材加载正常（" + sample + "）"; }
@@ -152,7 +152,7 @@ export function frameBase() {
     return ownBase() + "assets/yugioh/";
 }
 
-/** 纯函数：真实卡框 HTML（叠字坐标与 v1 一致；加载失败由 installFrameFallback 换成 CSS 版） */
+/** 纯函数：真实卡框 HTML（按内置 1394×2031 素材定位；框图加载失败时回退 CSS） */
 export function realFrameHtml(card, size) {
     const c = card || {};
     const w = size === "small" ? 150 : 224;
@@ -166,34 +166,39 @@ export function realFrameHtml(card, size) {
     const attrFile = isSpell ? "attribute-spell.webp" : isTrap ? "attribute-trap.webp" : (ATTR_FILES[String(c.attribute || "")] || "");
     const isLink = String(c.frame || "") === "连接";
     const isXyz = String(c.frame || "") === "超量";
-    const starCount = isLink ? 0 : Math.max(0, Math.min(13, isXyz ? (Number(c.rank) || 4) : (Number(c.level) || 0)));
+    const starCount = isLink || isSpell || isTrap ? 0 : Math.max(0, Math.min(13, isXyz ? (Number(c.rank) || 4) : (Number(c.level) || 0)));
     const fpx = function (k) { return Math.round(w * k) + "px"; };
     const img = String(c.image || "").trim();
     const parts = [];
     parts.push("<div class='ygo2-diy-card ygo2-real' style='position:relative;width:" + w + "px;height:" + h + "px' data-fallback='" + escapeHtml(diyCardHtml(c, size)) + "'>");
-    parts.push("<img class='ygo2-frame' src='" + base + file + "' alt='' style='position:absolute;left:0;top:0;width:100%;height:100%'>");
-    if (img) parts.push("<img class='ygo2-art' src='" + escapeHtml(img) + "' alt='' style='position:absolute;left:9.5%;top:13.4%;width:81%;height:55%;object-fit:cover'>");
-    parts.push("<div style='position:absolute;left:9.5%;top:3.4%;width:72%;color:#111;font-weight:700;font-size:" + fpx(0.075) + ";line-height:1.15;overflow:hidden;white-space:nowrap'>" + escapeHtml(String(c.name || "未命名")) + "</div>");
-    if (attrFile) parts.push("<img src='" + base + attrFile + "' alt='' style='position:absolute;right:6%;top:3.2%;width:" + fpx(0.115) + ";height:" + fpx(0.115) + "'>");
+    parts.push("<img class='ygo2-frame' src='" + escapeHtml(base + file) + "' alt='' style='position:absolute;left:0;top:0;width:100%;height:100%'>");
+    const artBox = isPend ? "left:6.6%;top:18%;width:86.8%;height:49%" : "left:12.3%;top:18.5%;width:75.4%;height:51.8%";
+    if (img) parts.push("<img class='ygo2-art' src='" + escapeHtml(img) + "' alt='' style='position:absolute;" + artBox + ";object-fit:cover'>");
+    parts.push("<div style='position:absolute;left:7%;top:5.2%;width:74%;color:" + (isXyz ? "#fff" : "#111") + ";font-weight:700;font-size:" + fpx(0.075) + ";line-height:1.15;overflow:hidden;white-space:nowrap;text-overflow:ellipsis'>" + escapeHtml(String(c.name || "未命名")) + "</div>");
+    if (attrFile) parts.push("<img src='" + escapeHtml(base + attrFile) + "' alt='' style='position:absolute;right:6%;top:4.8%;width:" + fpx(0.115) + ";height:" + fpx(0.115) + "'>");
     if (starCount) {
         const starFile = isXyz ? "rank.webp" : "level.webp";
         const stars = [];
-        for (let i = 0; i < starCount; i++) stars.push("<img src='" + base + starFile + "' alt='' style='width:" + fpx(0.058) + ";height:" + fpx(0.058) + "'>");
-        parts.push("<div style='position:absolute;right:6%;top:10.6%;display:flex;justify-content:flex-end;width:62%'>" + stars.join("") + "</div>");
+        for (let i = 0; i < starCount; i++) stars.push("<img src='" + escapeHtml(base + starFile) + "' alt='' style='width:" + fpx(0.058) + ";height:" + fpx(0.058) + "'>");
+        parts.push("<div style='position:absolute;right:12%;top:13.4%;display:flex;justify-content:flex-end;width:76%'>" + stars.join("") + "</div>");
     }
     if (isLink) {
-        parts.push("<div style='position:absolute;right:7%;top:10.8%;color:#111;font-weight:700;font-size:" + fpx(0.06) + "'>LINK-" + (Number(c.link) || 2) + "</div>");
-        const pos = { 左上: "left:12%;top:12.5%", 上: "left:44%;top:12.5%", 右上: "left:76%;top:12.5%", 左: "left:5.5%;top:38%", 右: "left:83%;top:38%", 左下: "left:12%;top:63.5%", 下: "left:44%;top:63.5%", 右下: "left:76%;top:63.5%" };
+        parts.push("<div style='position:absolute;right:9%;bottom:0.6%;color:#111;font-weight:700;font-size:" + fpx(0.05) + "'>LINK-" + (Number(c.link) || 2) + "</div>");
+        const pos = { 左上: "left:6.5%;top:14.5%", 上: "left:44%;top:14.5%", 右上: "left:82%;top:14.5%", 左: "left:4%;top:40%", 右: "left:84.5%;top:40%", 左下: "left:6.5%;top:67%", 下: "left:44%;top:67%", 右下: "left:82%;top:67%" };
         const chosen = Array.isArray(c.arrows) ? c.arrows : ARROWS.slice(0, Number(c.link) || 2);
         parts.push(ARROWS.map(function (a) {
             const on = chosen.indexOf(a) >= 0;
             const f = "arrow-" + ARROW_FILES[a] + (on ? "-on.webp" : "-off.webp");
-            return "<img src='" + base + f + "' alt='' style='position:absolute;" + pos[a] + ";width:" + fpx(0.115) + ";height:" + fpx(0.115) + "'>";
+            return "<img src='" + escapeHtml(base + f) + "' alt='' style='position:absolute;" + pos[a] + ";width:" + fpx(0.115) + ";height:" + fpx(0.115) + "'>";
         }).join(""));
     }
-    const icon = SUBTYPE_ICONS[String(c.subtype || "")];
-    if (icon) parts.push("<img src='" + base + icon + "' alt='' style='position:absolute;right:7%;top:68.8%;width:" + fpx(0.09) + ";height:" + fpx(0.09) + "'>");
-    parts.push("<div style='position:absolute;left:9.5%;top:73.2%;width:81%;height:19%;font-size:" + fpx(0.052) + ";color:#111;line-height:1.45;overflow:hidden;white-space:pre-wrap'>" + (c.condition ? "<b>【召唤条件】" + escapeHtml(String(c.condition)) + "</b><br>" : "") + escapeHtml(String(c.desc || "")) + "</div>");
+    const icon = (isSpell || isTrap) && SUBTYPE_ICONS[String(c.subtype || "")];
+    if (icon) parts.push("<img src='" + escapeHtml(base + icon) + "' alt='' style='position:absolute;right:12%;top:13.4%;width:" + fpx(0.09) + ";height:" + fpx(0.09) + "'>");
+    if (isPend) {
+        const scale = Math.max(0, Math.min(13, Number(c.scale) || 0));
+        parts.push("<div class='ygo2-pendulum-scale' style='position:absolute;left:7%;top:68%;width:86%;display:flex;justify-content:space-between;color:#111;font-weight:700;font-size:" + fpx(0.06) + "'><span>◀ " + scale + "</span><span>" + scale + " ▶</span></div>");
+    }
+    parts.push("<div style='position:absolute;left:7%;top:75.5%;width:86%;height:" + (isSpell || isTrap ? "17%" : "14.5%") + ";font-size:" + fpx(0.048) + ";color:#111;line-height:1.4;overflow:hidden;white-space:pre-wrap'><b>" + escapeHtml(typeLine(c)) + "</b><br>" + (c.condition ? "<b>【召唤条件】" + escapeHtml(String(c.condition)) + "</b><br>" : "") + escapeHtml(String(c.desc || "")) + "</div>");
     if (!isSpell && !isTrap) {
         const atk = (c.atk === undefined || c.atk === null || c.atk === "") ? "?" : String(c.atk);
         const def = (c.def === undefined || c.def === null || c.def === "") ? "?" : String(c.def);
@@ -222,6 +227,10 @@ export function installFrameFallback() {
         if (!card) return;
         const fb = card.getAttribute && card.getAttribute("data-fallback");
         if (!fb) return;
+        if (!el.classList.contains("ygo2-frame")) {
+            el.style.visibility = "hidden";
+            return;
+        }
         try { card.outerHTML = fb; log("DIY", "真实卡框加载失败，已回退 CSS 版"); } catch (error) { /* 忽略 */ }
     }, true);
     frameFallbackInstalled = true;
@@ -314,7 +323,14 @@ export async function openDiyEditor(name) {
     const root = await waitForElement(EDITOR_ID);
     if (!root) { log("DIY", "编辑器没有显示"); return "编辑器没有正常显示。"; }
     const getEl = function (id) { return root.querySelector("#" + id); };
+    let subtypeCategory = getEl("ygo2_diy_category").value;
     const refresh = function () {
+        const category = getEl("ygo2_diy_category").value;
+        if (category !== subtypeCategory) {
+            const subtype = getEl("ygo2_diy_subtype");
+            if (subtype) subtype.innerHTML = subtypeOptions(category, subtype.value);
+            subtypeCategory = category;
+        }
         const box = getEl("ygo2_diy_preview");
         if (box) box.innerHTML = cardFaceHtml(readDraft(root, getEl), "big");
     };

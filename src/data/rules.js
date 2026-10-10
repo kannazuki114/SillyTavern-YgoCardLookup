@@ -10,8 +10,8 @@ import { findCard, cardDetail } from "./cards.js";
 /** 1) 常量 */
 export const LIMITS_URL = "https://ygocdb.com/api/v0/limits.json";
 export const CARD_DETAIL_URL = "https://ygocdb.com/api/v0/card/";
-export const REGIONS = ["cn", "ja", "en"];
-export const REGION_LABEL = { cn: "官方简中", ja: "OCG 日文", en: "TCG 英文" };
+export const REGIONS = ["cn", "ja", "en", "none"];
+export const REGION_LABEL = { cn: "官方简中", ja: "OCG 日文", en: "TCG 英文", none: "无限制（无禁限规则）" };
 export const STATUS_TEXT = { forbidden: "禁止卡", limited: "限制 1 张", semi: "准限制 2 张", none: "无限制" };   // none 也要有中文标签（否则对外返回 label:"none"）
 
 let fetchImpl = null;
@@ -44,9 +44,11 @@ export function parseLimits(json) {
 
 /** 查禁限状态：同时接受 CID 与 8 位密码 */
 export function banlistStatus(limits, region, row) {
-    if (!limits || !row) return "unknown";
+    if (!row) return "unknown";
+    if (region === "none") return "none";
+    if (!limits) return "unknown";
     const r = limits[region] || limits.cn;
-    if (!r) return "unknown";
+    if (!r || !r.date) return "unknown";
     const keys = [String(row.cid || ""), String(row.id || "")].filter(Boolean);
     for (const key of keys) {
         if (r.forbidden.has(key)) return "forbidden";
@@ -84,9 +86,10 @@ export async function summonText(args) {
     if (!need.legal) lines.push("❌ 不能这样出场：" + need.reason);
     else lines.push(need.tributes ? "需要祭品：" + need.tributes + " 只（" + need.reason + "）" : "✅ 可以直接通常召唤（" + need.reason + "）");
     try {
-        const limits = await getLimits();
-        const status = banlistStatus(limits, "cn", row);
-        if (status !== "unknown" && status !== "none") lines.push("⚠️ 禁限状态（" + REGION_LABEL.cn + "）：" + STATUS_TEXT[status]);
+        const region = settings.get("banlistRegion") || "cn";
+        const limits = region === "none" ? null : await getLimits();
+        const status = banlistStatus(limits, region, row);
+        if (status !== "unknown" && status !== "none") lines.push("⚠️ 禁限状态（" + REGION_LABEL[region] + "）：" + STATUS_TEXT[status]);
     } catch (error) { /* 禁限表不可用不影响主判定 */ }
     lines.push("", "（本判定只覆盖通常召唤的祭品数与禁限状态；特殊召唤的素材要求请用官方裁定确认。）");
     return lines.join("\n");
@@ -99,14 +102,20 @@ export async function summonText(args) {
  *   banlistText(null, query)    → 只查这一张卡的状态（会明确回答"无限制"，不再让 AI 自己推断）
  */
 export async function banlistText(region, query) {
-    const limits = await getLimits();
     const key = REGIONS.indexOf(region || settings.get("banlistRegion") || "cn") >= 0 ? (region || settings.get("banlistRegion") || "cn") : "cn";
+    if (key === "none") {
+        const note = "无限制（无禁限规则）：不套用任何地区的禁限表；仍检查卡组张数与同名卡合计最多 3 张。";
+        if (!query) return note;
+        const st = await banlistStatusOf(query, key);
+        return "禁限状态：" + String(query).trim() + " —— " + st.label + "\n" + note;
+    }
+    const limits = await getLimits();
     const data = limits[key];
-    if (!data) return "未能获取禁限卡表。";
+    if (!data || !data.date) return "未能获取禁限卡表，请检查网络后重试；本次无法判定禁限状态。";
     const label = REGION_LABEL[key] || key;
     // 指定了卡名/卡密 → 只回这一张（含"无限制"）
     if (query) {
-        const st = await banlistStatusOf(query);
+        const st = await banlistStatusOf(query, key);
         const name = String(query).trim();
         if (st.status === "unknown") return "禁限查询：" + name + " —— " + (st.label || "查询失败") + "。";
         const note = st.status === "none"
@@ -296,9 +305,14 @@ export async function crossRulingText(args) {
 export const getLimits = lazyIndex(async function () {
     // 以前这里直接 await doFetch：断网/接口挂了就抛出去，/ygodeck 与禁限查询整个报错。
     // 现在退化成空表（"未能获取禁限卡表"），其它本地判定照常。
-    try { return parseLimits(await doFetch(LIMITS_URL, 20000)); }
+    try {
+        const limits = parseLimits(await doFetch(LIMITS_URL, 20000));
+        if (!Object.keys(limits).some(function (key) { return !!limits[key].date; })) throw new Error("禁限表为空");
+        return limits;
+    }
     catch (error) {
         log("数据", "禁限表取不到（" + (error && error.message ? error.message : error) + "）：禁限相关判定暂时不可用");
+        getLimits.reset();
         return emptyLimits();
     }
 });
@@ -308,7 +322,7 @@ export const getLimits = lazyIndex(async function () {
 export async function runAction(trigger) {
     const action = trigger && trigger.action;
     const arg = (trigger && trigger.arg) || "";
-    if (action === "banlist") return [{ name: arg ? "禁限状态" : "禁限卡表", text: await banlistText("cn", arg) }];
+    if (action === "banlist") return [{ name: arg ? "禁限状态" : "禁限卡表", text: await banlistText(null, arg) }];
     if (action === "rule") {
         if (!arg) return [];
         const text = await rulingText({ query: arg, limit: 3 });
@@ -318,14 +332,16 @@ export async function runAction(trigger) {
 }
 
 /** 单卡禁限状态（面板「查询内容 → 禁限状态」用）：返回 {status, label, region} */
-export async function banlistStatusOf(query) {
+export async function banlistStatusOf(query, regionOverride) {
     const row = await findCard(query);
     if (!row) return { status: "unknown", label: "未找到这张卡", region: "" };
-    const region = settings.get("banlistRegion") || "cn";
+    const selected = regionOverride || settings.get("banlistRegion") || "cn";
+    const region = REGIONS.indexOf(selected) >= 0 ? selected : "cn";
+    if (region === "none") return { status: "none", label: STATUS_TEXT.none, region: REGION_LABEL.none };
     try {
         const limits = await getLimits();
         const status = banlistStatus(limits, region, row);
-        return { status: status, label: STATUS_TEXT[status] || status, region: REGION_LABEL[region] || region };
+        return { status: status, label: status === "unknown" ? "禁限表不可用" : (STATUS_TEXT[status] || status), region: REGION_LABEL[region] || region };
     } catch (error) { return { status: "unknown", label: "禁限表不可用", region: region }; }
 }
 

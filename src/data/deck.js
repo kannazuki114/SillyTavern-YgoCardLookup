@@ -20,8 +20,8 @@ export const RULES = { mainMin: 40, mainMax: 60, extraMax: 15, sideMax: 15, same
  */
 export function extractDeckBlock(text) {
     const raw = String(text === undefined || text === null ? "" : text).replace(/＜/g, "<").replace(/＞/g, ">");
-    const m = /<(?:deck|卡组|牌组)\b[^>]*>([\s\S]*?)<\/(?:deck|卡组|牌组)\s*>/i.exec(raw);
-    return m ? String(m[1]).trim() : "";
+    const m = /<(deck|卡组|牌组)(?=\s|>)[^>]*>([\s\S]*?)<\/\1\s*>/i.exec(raw);
+    return m ? String(m[2]).trim() : "";
 }
 
 /** 从聊天记录里找最近的 <deck> 块（从最新一条往前找，最多看 limit 条） */
@@ -32,7 +32,6 @@ export function deckFromChat(chat, limit) {
         const msg = list[i];
         if (!msg || typeof msg !== "object") continue;
         const body = String(msg.mes !== undefined ? msg.mes : (msg.content !== undefined ? msg.content : ""));
-        if (body.indexOf("deck") < 0 && body.indexOf("<卡组") < 0 && body.indexOf("<牌组") < 0) continue;
         const block = extractDeckBlock(body);
         if (block) { log("卡组", "从第 " + (i + 1) + " 条消息的 <deck> 块读到卡表（" + block.split("\n").filter(Boolean).length + " 行）"); return block; }
     }
@@ -43,7 +42,7 @@ export function deckFromChat(chat, limit) {
 export function deckArgText(args) {
     // 参数可以是 {deck} 对象，也可以直接是卡表字符串（deckimage 里就是传字符串）
     const own = String((typeof args === "string" ? args : ((args && (args.deck || args.text)) || ""))).trim();
-    if (own) return { text: own, fromChat: false };
+    if (own) return { text: extractDeckBlock(own) || own, fromChat: false };
     const c = ctx();
     const fromChat = deckFromChat(c && c.chat);
     return { text: fromChat, fromChat: !!fromChat };
@@ -59,10 +58,10 @@ export function parseDeckText(text) {
         if (/^(#+\s*)?(副卡组|副|side)$/i.test(line)) { bucket = "side"; continue; }
         if (line[0] === "#" || line[0] === "!") continue;
         let count = 1, name = line;
-        let m = /^(\d+)\s*[x×*]?\s*(.+)$/.exec(line);
+        let m = /^(\d{1,2})(?:\s*[x×*]\s*|\s+|(?=[^\d\s]))(.+)$/.exec(line);
         if (m) { count = Number(m[1]) || 1; name = m[2].trim(); }
         else { m = /^(.+?)\s*[x×*]\s*(\d+)$/.exec(line); if (m) { name = m[1].trim(); count = Number(m[2]) || 1; } }
-        name = name.replace(/^\d+\s*[x×*]?\s*/, "").trim();
+        name = name.trim();
         if (!name) continue;
         out[bucket].push({ name: name, count: Math.max(1, Math.min(99, count)) });
     }
@@ -105,9 +104,10 @@ export function deckProblems(deck, limits, region) {
 /** 禁限检查需要卡库（单独一步，避免离线时整块失败） */
 export async function banlistProblems(merged, limits, region) {
     const out = [];
+    if (region === "none") return out;
     const stats = await getStatsIndex();
     for (const entry of merged.values()) {
-        const row = stats.byName.get(normalizeKey(entry.name));
+        const row = stats.byId.get(String(entry.name)) || stats.byName.get(normalizeKey(entry.name));
         if (!row) { out.push("「" + entry.name + "」在本地卡库里找不到（译名可能有出入）"); continue; }
         const r = (limits || {})[region] || (limits || {}).cn;
         if (!r) continue;
@@ -121,6 +121,7 @@ export async function banlistProblems(merged, limits, region) {
 
 /** 区域显示名（面板「查询内容 → 禁限表区域」用哪块表就显示哪块） */
 export function regionNameOf(region) {
+    if (region === "none") return "无限制（无禁限规则）";
     return region === "ja" || region === "jp" ? "OCG 日文" : region === "en" ? "TCG 英文" : "官方简中";
 }
 export function validateDeckText(deck, limits, region) {
@@ -210,7 +211,7 @@ export async function handText(args) {
     const stats = await getStatsIndex();
     const pool = [];
     for (const e of deck.main) {
-        const row = stats.byName.get(normalizeKey(e.name));
+        const row = stats.byId.get(String(e.name)) || stats.byName.get(normalizeKey(e.name));
         if (row) for (let i = 0; i < e.count; i++) pool.push(row);
     }
     if (!pool.length) return "卡表里没有能在本地卡库匹配到的卡（请检查译名）。";
@@ -246,8 +247,11 @@ export function registerDeck() {
         const region = settings.get("banlistRegion") || "cn";
         const base = validateDeckText(deck, null, region);
         let text = base.text;
-        try {
+        if (region === "none") {
+            text += "\n\nℹ️ 无限制（无禁限规则）：不套用地区禁限表，仍检查卡组张数与同名卡最多 3 张。";
+        } else try {
             const limits = await getLimits();
+            if (!limits[region] || !limits[region].date) throw new Error("禁限表不可用");
             const extra = await banlistProblems(base.base.merged, limits, region);
             const unknown = extra.filter(function (x) { return x.indexOf("找不到") >= 0; });
             const real = extra.filter(function (x) { return x.indexOf("找不到") < 0; });
@@ -262,7 +266,7 @@ export function registerDeck() {
     registry.provide("runAction:deck", async function (trigger) {
         const a = trigger && trigger.action;
         if (a === "series") return [{ name: "系列卡表", text: await seriesText(trigger.arg) }];
-        if (a === "deck") return [];
+        if (a === "deck") return [{ name: "卡组校验", text: await registry.call("tool:deck", { deck: trigger.arg }) }];
         return [];
     });
     // ★ 自然语言触发词「起手模拟 / 起手概率」：读聊天里的 <deck> 卡表（与 /ygohand 同一套逻辑）。
@@ -273,7 +277,7 @@ export function registerDeck() {
         const deck = parseDeckText(picked.text);
         if (!deck.main.length) return [{ name: "起手模拟", text: "要模拟起手的话，先把卡组贴出来（每行「3 卡名」），或写成 <deck>…</deck> 块发一条消息。" }];
         const arg = String(trigger.arg || "").trim();
-        const draw = /^d{1,3}$/.test(arg) ? Number(arg) : undefined;
+        const draw = /^\d{1,3}$/.test(arg) ? Number(arg) : undefined;
         return [{ name: "起手模拟", text: await handText({ deck: picked.text, draw: draw }) }];
     });
     log("数据", "卡组能力已注册（deck/hand/series）");

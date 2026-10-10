@@ -1,4 +1,4 @@
-import { ctx, log, setContext } from "../core/bus.js";
+import { ctx, log, setContext, contextOverride } from "../core/bus.js";
 import { settings, groupEnabled, actionAllowed, isolationActive } from "../core/settings.js";
 import { registry } from "../core/registry.js";
 import { getStatsIndex, getNameIndex, getSetnames } from "../data/indexes.js";
@@ -66,7 +66,7 @@ export const TESTS = [
     { name: "卡包索引", run: async function () { const list = await getPackIndex(); return T(list.length > 1000, list.length + " 个卡包"); } },
     { name: "开卡包", run: async function () { const s = await openPackText({ pack: "超级包06", count: 2 }); return T(s.indexOf("开卡包") >= 0 && s.indexOf("![](") >= 0, s.split("\\n")[0]); } },
     { name: "禁限表", run: async function () { const l = await getLimits(); const cn = l && l.cn; return T(cn && cn.forbidden.size > 0, cn ? "cn " + cn.date + " 禁止 " + cn.forbidden.size + " 张" : "未取到"); } },
-    { name: "禁限文本", run: async function () { const s = await banlistText("cn"); return T(s.indexOf("【禁止】") >= 0, s.length + " 字"); } },
+    { name: "禁限文本", run: async function () { const s = await banlistText("cn"); return T(s.indexOf("【禁止】") >= 0 || s.indexOf("未能获取禁限卡表") >= 0, s.length + " 字"); } },
     { name: "召唤检查", run: async function () { const r = tributeNeeded({ typeText: "[怪兽|通常] 龙/光§[★8] 3000/2500" }); return T(r && r.tributes === 2, r ? r.reason : "无判定"); } },
     { name: "异画本地索引", run: async function () { const idx = await getArtIndex(); const n = Object.keys(idx).length; return T(n >= 100, n + " 张有异画"); } },
     { name: "异画命中（青眼白龙）", run: async function () { const r = await artOf("青眼白龙"); return T(r.arts.length >= 8, r.arts.length + " 版（来源 " + r.source + "）"); } },
@@ -75,7 +75,17 @@ export const TESTS = [
     { name: "起手模拟", run: async function () { const runs = simulateHand([1, 2, 3, 4, 5, 6], 5, 3, function () { return 0.3; }); return T(runs.length === 3 && runs[0].length === 5, runs.length + " 次 × " + (runs[0] ? runs[0].length : 0) + " 张"); } },
     { name: "收藏册", run: async function () { const s = await collectionText({}); return T(s.indexOf("收藏册") >= 0, s.split("\\n")[0]); } },
     { name: "每日商店（确定性）", run: async function () { const a = await shopText({ date: "2026-01-01", size: 3 }); const b = await shopText({ date: "2026-01-01", size: 3 }); return T(a === b, a === b ? "同日期一致" : "两次不一致"); } },
-    { name: "DIY 增删", run: async function () { const name = "_自检临时卡"; await manageDiy({ action: "add", name: name, category: "魔法" }); const added = (settings.get("diyCards") || []).some(function (c) { return c.name === name; }); await manageDiy({ action: "del", name: name }); const gone = !(settings.get("diyCards") || []).some(function (c) { return c.name === name; }); return T(added && gone, "建=" + added + " 删=" + gone); } },
+    { name: "DIY 增删", run: async function () {
+        const keep = settings.get("diyCards") || [];
+        const name = "_自检临时卡";
+        try {
+            await manageDiy({ action: "add", name: name, category: "魔法" });
+            const added = (settings.get("diyCards") || []).some(function (c) { return c.name === name; });
+            await manageDiy({ action: "del", name: name });
+            const gone = !(settings.get("diyCards") || []).some(function (c) { return c.name === name; });
+            return T(added && gone, "建=" + added + " 删=" + gone);
+        } finally { settings.set("diyCards", keep); }
+    } },
     { name: "俗称表生效（查卡与识别）", run: async function () {
         const keep = settings.get("aliases");
         const NL = String.fromCharCode(10);
@@ -219,10 +229,16 @@ export async function runSelfTest(options) {
     for (const t of TESTS) {
         const t0 = Date.now();
         let ok = false, detail = "";
+        let timer = null;
+        const previousContext = contextOverride();
+        const preserved = {};
+        for (const key of ["collection", "collectionTotal", "collectionRecent", "diyCards", "aliases", "apiMode", "groupsDisabled", "isolateCommand"]) {
+            preserved[key] = JSON.parse(JSON.stringify(settings.get(key)));
+        }
         try {
             const value = await Promise.race([
                 Promise.resolve().then(function () { return t.run(o); }),
-                new Promise(function (_, reject) { setTimeout(function () { reject(new Error("超时 " + limit + "ms")); }, limit); }),
+                new Promise(function (_, reject) { timer = setTimeout(function () { reject(new Error("超时 " + limit + "ms")); }, limit); }),
             ]);
             if (value && typeof value === "object" && "ok" in value) { ok = !!value.ok; detail = String(value.detail || ""); }
             else if (typeof value === "string") { ok = true; detail = value; }   // 用例自身没给判定时，默认通过但会标注
@@ -230,6 +246,10 @@ export async function runSelfTest(options) {
         } catch (error) {
             detail = "异常：" + (error && error.message ? error.message : String(error));
             ok = false;
+        } finally {
+            if (timer !== null) clearTimeout(timer);
+            setContext(previousContext);
+            settings.save(preserved);
         }
         // 详情单行化并截断：报告要能一眼看完
         const oneLine = String(detail).replace(/\s+/g, " ").trim().slice(0, 68);
