@@ -6,7 +6,7 @@
     "js": "dist/index.js",
     "css": "style.css",
     "author": "kannazuki114",
-    "version": "0.2.0",
+    "version": "0.2.2",
     "homePage": "https://github.com/kannazuki114/SillyTavern-YgoCardLookup",
     "auto_update": false,
     "generate_interceptor": "YgoCardLookupV2_Intercept",

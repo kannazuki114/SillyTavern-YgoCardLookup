@@ -34,9 +34,9 @@ import { createInterceptor, registerInterceptorHooks } from "./src/inject/interc
 
 import { mountPanel, registerStrictnessAction, registryProblems } from "./src/ui/panel.js";
 import { configure as configurePanel, refreshDynamicSelects } from "./src/ui/panel.js";
-import { registerResult } from "./src/ui/result.js";
+import { registerResult, escapeHtml } from "./src/ui/result.js";
 import { registerPromptEditor } from "./src/ui/prompt.js";
-import { registerDiyUi, openDiyEditor, diyCardHtml, installFrameFallback } from "./src/ui/diy.js";
+import { registerDiyUi, openDiyEditor, cardFaceHtml, installFrameFallback } from "./src/ui/diy.js";
 import { registerGameUi, openCollection, openShop, openBoard, openRecap, openCard, openCardInput, installBuyDelegate } from "./src/ui/game.js";
 
 import { registerTools } from "./src/api/tools.js";
@@ -45,7 +45,7 @@ import { registerIntegrations } from "./src/api/integrations.js";
 import { registerSelfTest } from "./src/api/selftest.js";
 import { registerDeckImage } from "./src/api/deckimage.js";
 
-export const MODULE_VERSION = "0.2.0";
+export const MODULE_VERSION = "0.2.2";
 
 // ★ 必须在"脚本求值这一刻"记录自身目录：之后 document.currentScript 就变回 null 了。
 //   这样无论仓库/文件夹叫什么名字，data/ 与 assets/ 都能定位到（GitHub 安装时目录名 = 仓库名）。
@@ -83,7 +83,7 @@ function installCardImgCss() {
         const px = Math.max(120, Math.min(900, Number(settings.get("cardImgMax")) || 360));
         let el = document.getElementById("ygo2-img-style");
         if (!el) { el = document.createElement("style"); el.id = "ygo2-img-style"; document.head.appendChild(el); }
-        el.textContent = '.mes_text img.ygo2-card-img{max-width:min(100%," + px + "px);height:auto;border-radius:6px}';
+        el.textContent = '.mes_text img.ygo2-card-img{max-width:min(100%,' + px + 'px);height:auto;border-radius:6px}';
     } catch (error) { /* 无 DOM 时忽略 */ }
 }
 
@@ -127,7 +127,7 @@ export const PANEL_ACTIONS = {
     diyList: async function () {
         const list = settings.get("diyCards") || [];
         if (!list.length) return "还没有 DIY 卡，点「＋ 新建 DIY 卡」创建第一张。";
-        const html = '<div class="ygo2-diy-list">' + list.map(function (card) { return '<div class="ygo2-diy-list-item">' + diyCardHtml(card, "small") + '<div class="ygo2-diy-list-name">' + String(card.name || "") + '</div></div>'; }).join("") + '</div>';
+        const html = '<div class="ygo2-diy-list">' + list.map(function (card) { return '<div class="ygo2-diy-list-item">' + cardFaceHtml(card, "small") + '<div class="ygo2-diy-list-name">' + escapeHtml(card.name || "") + '</div></div>'; }).join("") + '</div>';
         const c = ctx();
         if (typeof c.callGenericPopup === "function") { const t = c.POPUP_TYPE || {}; await c.callGenericPopup(html, t.TEXT === undefined ? 1 : t.TEXT, "", { wide: true, large: true, okButton: "关闭" }); return "共 " + list.length + " 张 DIY 卡（已在面板中显示）。"; }
         return "共 " + list.length + " 张 DIY 卡：" + list.map(function (x) { return x.name; }).join("、");

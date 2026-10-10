@@ -6,7 +6,11 @@
 - 识别：括号词段 / 8 位卡密 / 自然语言触发词（「开一包」「今日商店」「查卡 灰流丽」）/ 自由文本卡名
 - 注入：拦截生成请求把资料写进提示词；宿主不支持拦截器时走事件兜底
 - 工具：20 个 function tool（AI 可主动查卡、查禁限、校验卡组…）+ 17 条斜杠命令
-- 面板：11 个分组、98 个控件（含栏目隔离、外部接口、维护）
+- 面板：11 个分组、105 个控件（含栏目隔离、外部接口、维护）
+
+「查询内容 → 禁限表区域」可选择 **无限制**：作为无禁限规则模式，不套用任何地区禁限表，也不请求在线禁限数据；卡组张数和同名卡合计最多 3 张的检查仍保留。工具省略 `region` 时遵循面板设置，显式传 `cn` / `ja` / `en` 可查询指定地区，`none` 表示无禁限规则。
+
+DIY 默认使用内置 WebP 真实卡框，编辑器与图形列表采用同一设置。卡图加载失败会保留卡框；卡框本身加载失败时自动回退自绘版。
 
 ## 安装
 
@@ -72,7 +76,11 @@
 ```bash
 node tools/bundle.mjs     # 改完 src/ 必须重新打包：生成宿主实际加载的 dist/index.js
 node tools/check-repo.mjs # 入库/发布前自检：文件是否齐全、dist 是否与 src 同步、有没有被 .gitignore 排除
+node tools/test-runtime.mjs --round=1 # 回归：真实 dist/data + 模拟宿主，断网与模拟接口返回
+node tools/test-browser.mjs --round=1 # 浏览器：需可解析 playwright 和本机 Chrome，真实 DOM/IndexedDB + 模拟宿主
 ```
+
+回归测试的模拟接口返回不代表真实联网接口可用。浏览器测试禁止外部请求；实际安装后仍可用 `/ygoselftest` 验证当前酒馆与网络环境。
 
 架构约定（详见 `src/`）：`index.js` 只做装配；五层 `core / data / inject / ui / api`；层间只通过 `registry` 能力表与 `settings` 通信；DOM id 以 `ygo2_` 开头、CSS 类以 `ygo2-` 开头；面板控件由 `src/ui/panel.js` 的字段表生成。
 

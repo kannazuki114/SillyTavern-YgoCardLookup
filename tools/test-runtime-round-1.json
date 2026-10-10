@@ -1,0 +1,168 @@
+{
+  "round": "1",
+  "mode": "real dist + data; simulated host; offline and synthetic API fixtures",
+  "pass": 38,
+  "total": 38,
+  "offlineSelftest": {
+    "pass": 37,
+    "total": 40
+  },
+  "fixtureSelftest": {
+    "pass": 40,
+    "total": 40
+  },
+  "results": [
+    {
+      "name": "17 slash commands, 20 tools and every required capability registered",
+      "ok": true
+    },
+    {
+      "name": "offline selftest: only 3 network-dependent checks fail",
+      "ok": true
+    },
+    {
+      "name": "card query writes a prompt; unrelated message clears it",
+      "ok": true
+    },
+    {
+      "name": "setting interceptEnabled prevents and clears injection",
+      "ok": true
+    },
+    {
+      "name": "setting triggerMode prevents and clears injection",
+      "ok": true
+    },
+    {
+      "name": "setting isolateCommand prevents and clears injection",
+      "ok": true
+    },
+    {
+      "name": "setting groupsDisabled prevents and clears injection",
+      "ok": true
+    },
+    {
+      "name": "quiet generation clears prior injection",
+      "ok": true
+    },
+    {
+      "name": "empty filter hook cancels injection",
+      "ok": true
+    },
+    {
+      "name": "isolation permits explicit slash draw",
+      "ok": true
+    },
+    {
+      "name": "disabled group rejects command before both data and popup",
+      "ok": true
+    },
+    {
+      "name": "draw 5 honors natural language count",
+      "ok": true
+    },
+    {
+      "name": "natural hand 3 draws 3 from the chat deck",
+      "ok": true
+    },
+    {
+      "name": "natural deck trigger validates the chat deck",
+      "ok": true
+    },
+    {
+      "name": "unhandled triggers preserve strictness; explicit strictness still works",
+      "ok": true
+    },
+    {
+      "name": "detectOnce uses the full action dispatcher",
+      "ok": true
+    },
+    {
+      "name": "Chinese, uppercase and explicit deck blocks preserve cards",
+      "ok": true
+    },
+    {
+      "name": "passcodes are not parsed as counts",
+      "ok": true
+    },
+    {
+      "name": "passcode decks work in hand simulation and deck image",
+      "ok": true
+    },
+    {
+      "name": "offline deck and banlist do not claim unrestricted or passed",
+      "ok": true
+    },
+    {
+      "name": "DIY add syntax in README creates and deletes a spell",
+      "ok": true
+    },
+    {
+      "name": "board movement command preserves from/to parameters",
+      "ok": true
+    },
+    {
+      "name": "only one fallback hook is registered for generation",
+      "ok": true
+    },
+    {
+      "name": "generation callback awaits asynchronous hook",
+      "ok": true
+    },
+    {
+      "name": "official sendbody event awaits retrieval and changes the original message",
+      "ok": true
+    },
+    {
+      "name": "dryRun body event does not mutate user content",
+      "ok": true
+    },
+    {
+      "name": "new message inside 5 seconds is not skipped by fallback",
+      "ok": true
+    },
+    {
+      "name": "parallel fallback calls share one draw, without double collection writes",
+      "ok": true
+    },
+    {
+      "name": "host interceptor after fallback reuses one draw, including copied chat objects",
+      "ok": true
+    },
+    {
+      "name": "generation ended clears memo so the next generation can rerun",
+      "ok": true
+    },
+    {
+      "name": "slow older detection cannot overwrite a newer no-hit result",
+      "ok": true
+    },
+    {
+      "name": "chat change invalidates in-flight injection",
+      "ok": true
+    },
+    {
+      "name": "resolver failure clears old prompt and does not throw",
+      "ok": true
+    },
+    {
+      "name": "card width settings substitute and clamp CSS pixel values",
+      "ok": true
+    },
+    {
+      "name": "release and limits recover after prior offline failures",
+      "ok": true
+    },
+    {
+      "name": "40/40 selftest passes with explicitly synthetic network fixtures",
+      "ok": true
+    },
+    {
+      "name": "selftest preserves collection, existing temporary-card name and context override",
+      "ok": true
+    },
+    {
+      "name": "selftest does not pin live host context after completion",
+      "ok": true
+    }
+  ]
+}

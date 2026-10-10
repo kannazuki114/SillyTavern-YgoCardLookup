@@ -1,0 +1,320 @@
+{
+  "mode": "isolated host, real dist and data, remote HTTP 503, no DOM or IndexedDB",
+  "selftest": {
+    "pass": 37,
+    "total": 40,
+    "results": [
+      {
+        "name": "设置读写",
+        "ok": true,
+        "ms": 0,
+        "detail": "OK"
+      },
+      {
+        "name": "能力注册表",
+        "ok": true,
+        "ms": 0,
+        "detail": "113 项能力"
+      },
+      {
+        "name": "卡名索引",
+        "ok": true,
+        "ms": 56,
+        "detail": "58344 条"
+      },
+      {
+        "name": "数值索引",
+        "ok": true,
+        "ms": 64,
+        "detail": "14281 行"
+      },
+      {
+        "name": "字段表",
+        "ok": true,
+        "ms": 2,
+        "detail": "598 条"
+      },
+      {
+        "name": "查卡（中文名）",
+        "ok": true,
+        "ms": 1,
+        "detail": "青眼白龙=89631139"
+      },
+      {
+        "name": "查卡（别名/英文名）",
+        "ok": true,
+        "ms": 0,
+        "detail": "别名=命中 英文=命中"
+      },
+      {
+        "name": "查卡（卡密）",
+        "ok": true,
+        "ms": 0,
+        "detail": "青眼白龙"
+      },
+      {
+        "name": "卡图链接",
+        "ok": true,
+        "ms": 0,
+        "detail": "https://cdn.233.momobako.com/ygopro/pics/89631139."
+      },
+      {
+        "name": "格式化输出",
+        "ok": true,
+        "ms": 1,
+        "detail": "271 字"
+      },
+      {
+        "name": "卡包索引",
+        "ok": false,
+        "ms": 0,
+        "detail": "0 个卡包"
+      },
+      {
+        "name": "开卡包",
+        "ok": false,
+        "ms": 1,
+        "detail": "卡包发售表取不到（要联网访问 ygocdb 的发售数据）：现在只能用「/ygodraw」按本地卡库随机抽卡，或稍后再试。"
+      },
+      {
+        "name": "禁限表",
+        "ok": false,
+        "ms": 0,
+        "detail": "cn 禁止 0 张"
+      },
+      {
+        "name": "禁限文本",
+        "ok": true,
+        "ms": 0,
+        "detail": "29 字"
+      },
+      {
+        "name": "召唤检查",
+        "ok": true,
+        "ms": 0,
+        "detail": "8 星需要 2 只祭品"
+      },
+      {
+        "name": "异画本地索引",
+        "ok": true,
+        "ms": 1,
+        "detail": "125 张有异画"
+      },
+      {
+        "name": "异画命中（青眼白龙）",
+        "ok": true,
+        "ms": 0,
+        "detail": "8 版（来源 local）"
+      },
+      {
+        "name": "异画卡表",
+        "ok": true,
+        "ms": 0,
+        "detail": "🎨 有异画的卡（本地索引，共 125 张 / 297 张版本图） · 黑魔导（46986414）9 版 · ???（149694341"
+      },
+      {
+        "name": "卡组校验",
+        "ok": true,
+        "ms": 1,
+        "detail": "主卡组 1 张（应为 40-60 张）"
+      },
+      {
+        "name": "起手模拟",
+        "ok": true,
+        "ms": 0,
+        "detail": "3 次 × 5 张"
+      },
+      {
+        "name": "收藏册",
+        "ok": true,
+        "ms": 0,
+        "detail": "📖 收藏册 已收集 0 / 14281 种（0.0%）｜累计抽到 0 张"
+      },
+      {
+        "name": "每日商店（确定性）",
+        "ok": true,
+        "ms": 0,
+        "detail": "同日期一致"
+      },
+      {
+        "name": "DIY 增删",
+        "ok": true,
+        "ms": 1,
+        "detail": "建=true 删=true"
+      },
+      {
+        "name": "俗称表生效（查卡与识别）",
+        "ok": true,
+        "ms": 2,
+        "detail": "单名映射=OK 查卡=青眼白龙 句子识别=青眼白龙 三种分隔符=3 条"
+      },
+      {
+        "name": "俗称表解析",
+        "ok": true,
+        "ms": 0,
+        "detail": "1 条"
+      },
+      {
+        "name": "决斗盘 reducer",
+        "ok": true,
+        "ms": 0,
+        "detail": "LP=7000 场上=1"
+      },
+      {
+        "name": "触发词（6 类）",
+        "ok": true,
+        "ms": 1,
+        "detail": "6/6"
+      },
+      {
+        "name": "犹豫句不误触",
+        "ok": true,
+        "ms": 0,
+        "detail": "4/4 未误触"
+      },
+      {
+        "name": "注入文本组装",
+        "ok": true,
+        "ms": 0,
+        "detail": "1531 字"
+      },
+      {
+        "name": "提示词编辑器",
+        "ok": true,
+        "ms": 0,
+        "detail": "4 项"
+      },
+      {
+        "name": "召唤检查与自动上盘",
+        "ok": true,
+        "ms": 1,
+        "detail": "★8 需祭品=OK ★3 可直接=OK 上盘=OK"
+      },
+      {
+        "name": "外部接口：链路与降级",
+        "ok": true,
+        "ms": 1,
+        "detail": "迁移=OK 能力探测=OK 提示词=OK off=OK 解析=OK 熔断=OK 预算=OK"
+      },
+      {
+        "name": "隔离（总开关 + 栏目）",
+        "ok": true,
+        "ms": 0,
+        "detail": "默认可用=OK 停用玩法后 pack 禁/card 允=OK 复选反映=OK 总隔离=OK"
+      },
+      {
+        "name": "商店购买链路",
+        "ok": true,
+        "ms": 1,
+        "detail": "3 个购买按钮；写入格式正确；能力=OK"
+      },
+      {
+        "name": "构建指纹",
+        "ok": true,
+        "ms": 0,
+        "detail": "哈希 4c390d18 / 36 模块 / 2026-10-10T15:49:39"
+      },
+      {
+        "name": "必需能力（REQUIRED_CAPS）",
+        "ok": true,
+        "ms": 0,
+        "detail": "全部就位"
+      },
+      {
+        "name": "对外接口（YgoCardLookupV2）",
+        "ok": true,
+        "ms": 0,
+        "detail": "call=OK actions=OK ready=OK export/import=OK"
+      },
+      {
+        "name": "面板字段注册表",
+        "ok": true,
+        "ms": 0,
+        "detail": "105 个控件 / 11 个分组"
+      },
+      {
+        "name": "function tool 定义",
+        "ok": true,
+        "ms": 0,
+        "detail": "20 个工具"
+      },
+      {
+        "name": "斜杠命令定义",
+        "ok": true,
+        "ms": 0,
+        "detail": "17 条命令"
+      }
+    ]
+  },
+  "observations": [
+    {
+      "name": "boot and registrations",
+      "actual": {
+        "slash": 17,
+        "functionTools": 20,
+        "events": 8,
+        "missing": []
+      }
+    },
+    {
+      "name": "stale injection after unrelated message",
+      "actual": {
+        "initialChars": 1952,
+        "subsequentChars": 0,
+        "unchanged": false
+      }
+    },
+    {
+      "name": "command isolation /ygodraw",
+      "actual": "🎲 随机抽卡（卡库共 14281 张）\n[0] 超巨霸・雷霆交叉击\n[陷阱]\n![](https://cdn.233.momobako.com/ygopro/pics/34047456.jpg)"
+    },
+    {
+      "name": "natural draw 5",
+      "actual": {
+        "trigger": {
+          "action": "draw",
+          "arg": "5",
+          "before": "",
+          "raw": "抽卡 5",
+          "via": "word"
+        },
+        "cards": 5
+      }
+    },
+    {
+      "name": "natural hand 3",
+      "actual": "🃏 起手模拟（主卡组 12 张，抽 3 张）"
+    },
+    {
+      "name": "natural deck validation and strictness",
+      "actual": {
+        "trigger": {
+          "action": "deck",
+          "arg": "",
+          "before": "",
+          "raw": "卡组校验",
+          "via": "word"
+        },
+        "result": [
+          {
+            "name": "卡组校验",
+            "text": "（卡表来自聊天里的 <deck> 块）\n\n📋 卡组校验\n主卡组 12 张 / 额外 0 张 / 副卡组 0 张，合计 12 张\n\n❌ 数量/同名问题 1 处：\n· 主卡组 12 张（应为 40-60 张）\n\n（禁限表不可用，本次只做了数量与同名检查）"
+          }
+        ],
+        "strictnessAfter": "strict"
+      }
+    },
+    {
+      "name": "await generation event waits for hook",
+      "actual": true
+    },
+    {
+      "name": "hook eventually finishes",
+      "actual": true
+    },
+    {
+      "name": "image max width CSS at setting 500",
+      "actual": ".mes_text img.ygo2-card-img{max-width:min(100%,500px);height:auto;border-radius:6px}"
+    }
+  ]
+}

@@ -1,0 +1,65 @@
+{
+  "round": "2",
+  "mode": "headless installed Chrome; real DOM/IndexedDB; simulated Tavern context; remote requests intentionally 503",
+  "pass": 14,
+  "total": 14,
+  "errors": [],
+  "results": [
+    {
+      "name": "real browser mounts all panel controls and registers commands/tools",
+      "ok": true
+    },
+    {
+      "name": "panel width change updates settings and computed image CSS",
+      "ok": true
+    },
+    {
+      "name": "model text and textarea with HTML characters survive panel rendering",
+      "ok": true
+    },
+    {
+      "name": "shop popup and buy click write the real textarea and dispatch input",
+      "ok": true
+    },
+    {
+      "name": "card popup resolves query and renders card details",
+      "ok": true
+    },
+    {
+      "name": "DIY editor saves and deletes a card through actual clicks",
+      "ok": true
+    },
+    {
+      "name": "prompt editor changes settings and reset restores defaults",
+      "ok": true
+    },
+    {
+      "name": "bundled DIY assets return successful HTTP responses",
+      "ok": true
+    },
+    {
+      "name": "deck image slash command reads chat deck and opens generated page",
+      "ok": true
+    },
+    {
+      "name": "database installation immediately replaces cached stats",
+      "ok": true
+    },
+    {
+      "name": "clear cache preserves manually installed database",
+      "ok": true
+    },
+    {
+      "name": "IndexedDB installation persists across reload",
+      "ok": true
+    },
+    {
+      "name": "database uninstall restores bundled stats immediately",
+      "ok": true
+    },
+    {
+      "name": "no uncaught browser JavaScript errors",
+      "ok": true
+    }
+  ]
+}
